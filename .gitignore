@@ -36,3 +36,5 @@ go.work.sum
 .env
 *.out
 build/
+third_party
+gen
