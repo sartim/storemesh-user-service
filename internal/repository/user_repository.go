@@ -1,4 +1,4 @@
-package postgres
+package repository
 
 import (
 	"context"
@@ -19,7 +19,7 @@ type PaginationParams struct {
 	Limit int `form:"limit,default=100"`
 }
 
-func NewBaseRepository(
+func NewUserRepository(
 	db *gorm.DB, model interface{}) *BaseRepository {
 	return &BaseRepository{db, model}
 }
@@ -96,7 +96,6 @@ func (ctrl *BaseRepository) GetByEmail(ctx context.Context, email string) (*mode
 }
 
 func (ctrl *BaseRepository) Create(ctx context.Context, user *models.User) error {
-	model := reflect.New(reflect.TypeOf(ctrl.model)).Interface()
 
 	tx := ctrl.db.Begin()
 	defer func() {
@@ -106,7 +105,7 @@ func (ctrl *BaseRepository) Create(ctx context.Context, user *models.User) error
 		}
 	}()
 
-	if err := tx.Create(model).Error; err != nil {
+	if err := tx.Create(user).Error; err != nil {
 		tx.Rollback()
 		panic(err)
 		return err
@@ -118,9 +117,8 @@ func (ctrl *BaseRepository) Create(ctx context.Context, user *models.User) error
 }
 
 func (ctrl *BaseRepository) Update(ctx context.Context, user *models.User) error {
-	//model := reflect.New(reflect.TypeOf(ctrl.model)).Interface()
 
-	ctrl.db.Save(&ctrl.model)
+	ctrl.db.Save(user)
 	return nil
 }
 
