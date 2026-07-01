@@ -37,4 +37,3 @@ go.work.sum
 *.out
 build/
 third_party
-gen
