@@ -24,6 +24,7 @@ import (
 	"storemesh-user-service/internal/helpers/env"
 	"storemesh-user-service/internal/models"
 	postgres "storemesh-user-service/internal/repository/postgres"
+	"storemesh-user-service/internal/repository/redis"
 	"syscall"
 	"time"
 
@@ -62,7 +63,15 @@ func init() {
 		env.LoadEnvVars()
 	}
 
-	postgres.ConnectToDb()
+	dsn := config.DatabaseConfig()
+	maxOpen := 100
+	maxIdle := 100
+	connMaxLifetime := time.Duration(10 * time.Minute)
+
+	_, err := postgres.OpenPostgres(dsn, maxOpen, maxIdle, connMaxLifetime)
+	if err != nil {
+		//
+	}
 }
 
 func main() {
@@ -87,19 +96,19 @@ func main() {
 	}
 
 	// ── Database ──────────────────────────────────────────────────────────────
-	db, err := repository.OpenPostgres(cfg.DatabaseURL, cfg.DBMaxOpenConns, cfg.DBMaxIdleConns, cfg.DBConnMaxLifetime)
+	db, err := postgres.OpenPostgres(cfg.DatabaseURL, cfg.DBMaxOpenConns, cfg.DBMaxIdleConns, cfg.DBConnMaxLifetime)
 	if err != nil {
 		log.Fatal("open postgres", zap.Error(err))
 	}
 	log.Info("postgres connected")
 
-	if err := repository.MigrateAndSeed(db); err != nil {
+	if err := postgres.MigrateAndSeed(db); err != nil {
 		log.Fatal("migrate and seed", zap.Error(err))
 	}
 	log.Info("migrations applied")
 
 	// ── Redis ─────────────────────────────────────────────────────────────────
-	rdb, err := repository.NewRedisClient(cfg.RedisURL)
+	rdb, err := redis.NewRedisClient(cfg.RedisURL)
 	if err != nil {
 		log.Fatal("open redis", zap.Error(err))
 	}
@@ -108,7 +117,7 @@ func main() {
 
 	userModel := models.User{}
 	// ── Repositories + ONE shared service instance ───────────────────────────
-	userRepo := postgres.NewBaseRepository(postgres.DB, userModel)
+	userRepo := repository.NewUserRepository(postgres.DB, userModel)
 
 	svc := service.NewUserService(
 		userRepo,
