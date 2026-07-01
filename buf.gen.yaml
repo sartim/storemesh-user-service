@@ -1,5 +1,7 @@
 version: v2
-
+clean: true
+managed:
+  enabled: true
 plugins:
   - remote: buf.build/protocolbuffers/go
     out: gen
@@ -10,3 +12,5 @@ plugins:
     out: gen
     opt:
       - paths=source_relative
+inputs:
+  - directory: proto
