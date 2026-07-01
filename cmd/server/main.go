@@ -62,16 +62,22 @@ func init() {
 	if _, err := os.Stat(".env"); err == nil {
 		env.LoadEnvVars()
 	}
-
-	dsn := config.DatabaseConfig()
-	maxOpen := 100
-	maxIdle := 100
-	connMaxLifetime := time.Duration(10 * time.Minute)
-
-	_, err := postgres.OpenPostgres(dsn, maxOpen, maxIdle, connMaxLifetime)
+	cfg, err := config.Load()
 	if err != nil {
-		//
+		fmt.Println("Error loading .env file")
 	}
+	if cfg != nil {
+		dsn := cfg.DatabaseURL
+		maxOpen := 100
+		maxIdle := 100
+		connMaxLifetime := time.Duration(10 * time.Minute)
+
+		_, err := postgres.OpenPostgres(dsn, maxOpen, maxIdle, connMaxLifetime)
+		if err != nil {
+			//
+		}
+	}
+
 }
 
 func main() {

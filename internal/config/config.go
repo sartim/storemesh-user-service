@@ -86,7 +86,3 @@ func envDuration(key string, def time.Duration) time.Duration {
 	}
 	return d
 }
-
-func DatabaseConfig() string {
-	return os.Getenv("DATABASE_URL")
-}
