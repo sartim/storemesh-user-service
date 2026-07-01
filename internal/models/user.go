@@ -1,0 +1,21 @@
+package models
+
+import (
+	"github.com/google/uuid"
+)
+
+type User struct {
+	Model
+	ID        uuid.UUID `json:"id" gorm:"column:id;primary_key;type:uuid;default:uuid_generate_v4()"`
+	FirstName string    `json:"first_name" gorm:"column:first_name"`
+	LastName  string    `json:"last_name" gorm:"column:last_name"`
+	Email     string    `json:"email" gorm:"column:email;index:idx_name,unique"`
+	Phone     string    `json:"phone" gorm:"column:phone;index:idx_name,unique"`
+	Password  string    `json:"-" gorm:"column:password;not null"`
+	IsActive  bool      `json:"is_active" gorm:"column:is_active;default=false"`
+	Deleted   bool      `json:"deleted" gorm:"column:deleted;default=false"`
+}
+
+func (User) TableName() string {
+	return "user"
+}
