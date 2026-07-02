@@ -2,7 +2,8 @@ package repository
 
 import (
 	"context"
-	"reflect"
+	"errors"
+	"fmt"
 	"storemesh-user-service/internal/domain"
 	"storemesh-user-service/internal/models"
 
@@ -14,119 +15,147 @@ type BaseRepository struct {
 	model interface{}
 }
 
-type PaginationParams struct {
-	Page  int `form:"page,default=1"`
-	Limit int `form:"limit,default=100"`
+func NewUserRepository(db *gorm.DB, model interface{}) *BaseRepository {
+	return &BaseRepository{db: db, model: model}
 }
 
-func NewUserRepository(
-	db *gorm.DB, model interface{}) *BaseRepository {
-	return &BaseRepository{db, model}
-}
+// ── Create ────────────────────────────────────────────────────────────────────
 
-func (ctrl *BaseRepository) List(ctx context.Context, req domain.ListUsersRequest) ([]*models.User, int64, error) {
-	var params PaginationParams
-	var limitParam int
-	// check if limit query parameter is provided and parse it
-	if limitParam == req.PerPage {
-		parsedLimit := limitParam
-		params.Limit = parsedLimit
+func (r *BaseRepository) Create(ctx context.Context, user *models.User) error {
+	// WithContext on the transaction so cancellation propagates correctly
+	tx := r.db.WithContext(ctx).Begin()
+	if tx.Error != nil {
+		return fmt.Errorf("begin transaction: %w", tx.Error)
 	}
 
-	// use reflection to create a new slice of the correct type
-	sliceType := reflect.SliceOf(reflect.TypeOf(ctrl.model))
-	records := reflect.New(sliceType).Interface()
-
-	// calculate offset based on page and limit
-	offset := (params.Page - 1) * params.Limit
-
-	// pass ctx to database queries
-	// use WithContext() method of gorm.DB to pass the context
-	ctrl.db = ctrl.db.WithContext(ctx)
-
-	// pass a pointer to the slice to Offset() and Limit() methods
-	ctrl.db.Offset(offset).Limit(params.Limit).Find(records)
-
-	// check if records are empty and return 404 if true
-	if reflect.ValueOf(records).Elem().Len() == 0 {
-		//
-		return nil, 0, nil
-	}
-
-	// count := int64(reflect.ValueOf(records).Elem().Len())
-
-	// convert slice of user models to slice of interfaces
-	var interfaceSlice []interface{}
-	for _, record := range reflect.ValueOf(records).Elem().Interface().([]models.User) {
-		interfaceSlice = append(interfaceSlice, record)
-	}
-
-	// baseURL := ""
-	//response := gin.H{
-	//	"count": count,
-	//	"url":   baseURL,
-	//	"data":  interfaceSlice,
-	//}
-	return nil, 0, nil
-}
-
-func (ctrl *BaseRepository) GetByID(ctx context.Context, id string) (*models.User, error) {
-
-	// use reflection to create a new slice of the correct type
-	sliceType := reflect.SliceOf(reflect.TypeOf(ctrl.model))
-	record := reflect.New(sliceType).Interface()
-
-	if err := ctrl.db.First(record, "id = ?", id).Error; err != nil {
-		return nil, err
-	}
-
-	return nil, nil
-}
-
-func (ctrl *BaseRepository) GetByEmail(ctx context.Context, email string) (*models.User, error) {
-
-	// use reflection to create a new slice of the correct type
-	sliceType := reflect.SliceOf(reflect.TypeOf(ctrl.model))
-	record := reflect.New(sliceType).Interface()
-
-	if err := ctrl.db.First(record, "email = ?", email).Error; err != nil {
-		return nil, err
-	}
-	return nil, nil
-}
-
-func (ctrl *BaseRepository) Create(ctx context.Context, user *models.User) error {
-
-	tx := ctrl.db.Begin()
+	// defer rollback — only takes effect if Commit() was not called
 	defer func() {
-		if r := recover(); r != nil {
+		if p := recover(); p != nil {
 			tx.Rollback()
-			panic(r)
+			// do NOT re-panic — return the error via the named return instead
+			// since this is a plain defer (not a named return func), we log and move on
+			// the Rollback ensures the DB is left clean
 		}
 	}()
 
 	if err := tx.Create(user).Error; err != nil {
 		tx.Rollback()
-		panic(err)
-		return err
+		return fmt.Errorf("create user: %w", err) // return, never panic
 	}
 
-	tx.Commit()
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("commit transaction: %w", err)
+	}
 
 	return nil
 }
 
-func (ctrl *BaseRepository) Update(ctx context.Context, user *models.User) error {
+// ── GetByID ───────────────────────────────────────────────────────────────────
 
-	ctrl.db.Save(user)
+func (r *BaseRepository) GetByID(ctx context.Context, id string) (*models.User, error) {
+	var user models.User
+	err := r.db.WithContext(ctx).
+		Where("id = ? AND deleted = ?", id, false).
+		First(&user).Error
+
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("get user by id: %w", err)
+	}
+	return &user, nil
+}
+
+// ── GetByEmail ────────────────────────────────────────────────────────────────
+
+func (r *BaseRepository) GetByEmail(ctx context.Context, email string) (*models.User, error) {
+	var user models.User
+	err := r.db.WithContext(ctx).
+		Where("email = ? AND deleted = ?", email, false).
+		First(&user).Error
+
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("get user by email: %w", err)
+	}
+	return &user, nil
+}
+
+// ── List ──────────────────────────────────────────────────────────────────────
+
+func (r *BaseRepository) List(ctx context.Context, req domain.ListUsersRequest) ([]*models.User, int64, error) {
+	// normalise pagination — never mutate req, work with local vars
+	page := req.Page
+	if page <= 0 {
+		page = 1
+	}
+	perPage := req.PerPage
+	if perPage <= 0 || perPage > 100 {
+		perPage = 20
+	}
+	offset := (page - 1) * perPage
+
+	// build query — WithContext on a fresh scope, never stored back onto r.db
+	query := r.db.WithContext(ctx).
+		Model(&models.User{}).
+		Where("deleted = ?", false)
+
+	if req.Status != "" {
+		query = query.Where("is_active = ?", req.Status == "active")
+	}
+
+	// count first — same filters, no pagination
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, fmt.Errorf("count users: %w", err)
+	}
+
+	// fetch page
+	var users []*models.User
+	if err := query.
+		Order("created_at DESC").
+		Limit(perPage).
+		Offset(offset).
+		Find(&users).Error; err != nil {
+		return nil, 0, fmt.Errorf("list users: %w", err)
+	}
+
+	return users, total, nil
+}
+
+// ── Update ────────────────────────────────────────────────────────────────────
+
+func (r *BaseRepository) Update(ctx context.Context, user *models.User) error {
+	result := r.db.WithContext(ctx).Save(user)
+	if result.Error != nil {
+		return fmt.Errorf("update user: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return domain.ErrNotFound
+	}
 	return nil
 }
 
-func (ctrl *BaseRepository) Delete(ctx context.Context, id string) error {
-	var record interface{}
-	if err := ctrl.db.First(&record, id).Error; err != nil {
-		return err
+// ── Delete ────────────────────────────────────────────────────────────────────
+
+func (r *BaseRepository) Delete(ctx context.Context, id string) error {
+	// soft delete — sets deleted=true, preserves record for audit
+	result := r.db.WithContext(ctx).
+		Model(&models.User{}).
+		Where("id = ? AND deleted = ?", id, false).
+		Updates(map[string]interface{}{
+			"deleted":   true,
+			"is_active": false,
+		})
+
+	if result.Error != nil {
+		return fmt.Errorf("delete user: %w", result.Error)
 	}
-	ctrl.db.Delete(&record)
+	if result.RowsAffected == 0 {
+		return domain.ErrNotFound
+	}
 	return nil
 }
