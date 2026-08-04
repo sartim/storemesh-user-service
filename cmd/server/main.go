@@ -45,14 +45,24 @@ const grpcUserServiceName = "user.v1.UserService"
 func main() {
 	if _, err := os.Stat(".env"); err == nil {
 		if err := env.LoadEnvVars(); err != nil {
-			fmt.Fprintf(os.Stderr, "load .env: %v\n", err)
+			fmt.Fprintf(
+				os.Stderr,
+				"load .env: %v\n",
+				err,
+			)
+
 			os.Exit(1)
 		}
 	}
 
 	log, err := zap.NewProduction()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "create logger: %v\n", err)
+		fmt.Fprintf(
+			os.Stderr,
+			"create logger: %v\n",
+			err,
+		)
+
 		os.Exit(1)
 	}
 
@@ -62,7 +72,10 @@ func main() {
 
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatal("load config", zap.Error(err))
+		log.Fatal(
+			"load config",
+			zap.Error(err),
+		)
 	}
 
 	tracerProvider, err := initTracer(cfg)
@@ -72,7 +85,9 @@ func main() {
 			zap.Error(err),
 		)
 	} else {
-		otel.SetTracerProvider(tracerProvider)
+		otel.SetTracerProvider(
+			tracerProvider,
+		)
 
 		defer func() {
 			ctx, cancel := context.WithTimeout(
@@ -81,7 +96,9 @@ func main() {
 			)
 			defer cancel()
 
-			if err := tracerProvider.Shutdown(ctx); err != nil {
+			if err := tracerProvider.Shutdown(
+				ctx,
+			); err != nil {
 				log.Warn(
 					"shutdown tracer provider",
 					zap.Error(err),
@@ -97,7 +114,10 @@ func main() {
 		cfg.DBConnMaxLifetime,
 	)
 	if err != nil {
-		log.Fatal("open postgres", zap.Error(err))
+		log.Fatal(
+			"open postgres",
+			zap.Error(err),
+		)
 	}
 
 	sqlDB, err := db.DB()
@@ -110,42 +130,70 @@ func main() {
 
 	defer func() {
 		if err := sqlDB.Close(); err != nil {
-			log.Warn("close postgres", zap.Error(err))
+			log.Warn(
+				"close postgres",
+				zap.Error(err),
+			)
 		}
 	}()
 
 	log.Info("postgres connected")
 
-	if err := postgres.MigrateAndSeed(db); err != nil {
-		log.Fatal("migrate and seed", zap.Error(err))
+	if err := postgres.MigrateAndSeed(
+		db,
+	); err != nil {
+		log.Fatal(
+			"migrate and seed",
+			zap.Error(err),
+		)
 	}
 
 	log.Info("migrations applied")
 
-	redisClient, err := redisrepository.NewRedisClient(cfg.RedisURL)
+	redisClient, err := redisrepository.NewRedisClient(
+		cfg.RedisURL,
+	)
 	if err != nil {
-		log.Fatal("open redis", zap.Error(err))
+		log.Fatal(
+			"open redis",
+			zap.Error(err),
+		)
 	}
 
 	defer func() {
 		if err := redisClient.Close(); err != nil {
-			log.Warn("close redis", zap.Error(err))
+			log.Warn(
+				"close redis",
+				zap.Error(err),
+			)
 		}
 	}()
 
 	log.Info("redis connected")
 
-	userRepository := repository.NewUserRepository(db)
+	userRepository := repository.NewUserRepository(
+		db,
+	)
+
+	sessionStore := redisrepository.NewSessionCache(
+		redisClient,
+	)
 
 	userService := service.NewUserService(
 		userRepository,
+		sessionStore,
 		log,
 		cfg.JWTSecret,
+		cfg.JWTIssuer,
+		cfg.JWTAudience,
 		cfg.JWTAccessTokenTTL,
 		cfg.JWTRefreshTokenTTL,
 	)
 
-	serverErrors := make(chan error, 2)
+	serverErrors := make(
+		chan error,
+		2,
+	)
 
 	grpcServer, healthServer := buildGRPCServer(
 		userService,
@@ -162,15 +210,21 @@ func main() {
 				"grpc listen: %w",
 				err,
 			)
+
 			return
 		}
 
 		log.Info(
 			"gRPC server listening",
-			zap.String("port", cfg.GRPCPort),
+			zap.String(
+				"port",
+				cfg.GRPCPort,
+			),
 		)
 
-		if err := grpcServer.Serve(listener); err != nil {
+		if err := grpcServer.Serve(
+			listener,
+		); err != nil {
 			serverErrors <- fmt.Errorf(
 				"grpc serve: %w",
 				err,
@@ -187,7 +241,10 @@ func main() {
 	go func() {
 		log.Info(
 			"HTTP server listening",
-			zap.String("port", cfg.HTTPPort),
+			zap.String(
+				"port",
+				cfg.HTTPPort,
+			),
 		)
 
 		if err := httpServer.ListenAndServe(); err != nil &&
@@ -199,7 +256,10 @@ func main() {
 		}
 	}()
 
-	shutdownSignals := make(chan os.Signal, 1)
+	shutdownSignals := make(
+		chan os.Signal,
+		1,
+	)
 
 	signal.Notify(
 		shutdownSignals,
@@ -207,7 +267,9 @@ func main() {
 		syscall.SIGTERM,
 	)
 
-	defer signal.Stop(shutdownSignals)
+	defer signal.Stop(
+		shutdownSignals,
+	)
 
 	select {
 	case signalReceived := <-shutdownSignals:
@@ -218,6 +280,7 @@ func main() {
 				signalReceived.String(),
 			),
 		)
+
 	case serverErr := <-serverErrors:
 		log.Error(
 			"fatal server error, shutting down",
@@ -239,6 +302,7 @@ func buildGRPCServer(
 ) (*grpc.Server, *health.Server) {
 	server := grpc.NewServer(
 		middleware.TracingStatsHandler(),
+
 		grpc.ChainUnaryInterceptor(
 			middleware.Recovery(log),
 			middleware.Logging(log),
@@ -247,7 +311,9 @@ func buildGRPCServer(
 
 	userv1.RegisterUserServiceServer(
 		server,
-		grpcserver.NewUserGRPCServer(userService),
+		grpcserver.NewUserGRPCServer(
+			userService,
+		),
 	)
 
 	healthServer := health.NewServer()
@@ -273,7 +339,9 @@ func buildHTTPServer(
 	log *zap.Logger,
 ) *http.Server {
 	if cfg.Environment == "production" {
-		gin.SetMode(gin.ReleaseMode)
+		gin.SetMode(
+			gin.ReleaseMode,
+		)
 	}
 
 	router := gin.New()
@@ -286,25 +354,35 @@ func buildHTTPServer(
 
 	router.GET(
 		"/healthz",
-		func(c *gin.Context) {
+		func(
+			c *gin.Context,
+		) {
 			c.JSON(
 				http.StatusOK,
-				gin.H{"status": "ok"},
+				gin.H{
+					"status": "ok",
+				},
 			)
 		},
 	)
 
 	router.GET(
 		"/readyz",
-		func(c *gin.Context) {
+		func(
+			c *gin.Context,
+		) {
 			c.JSON(
 				http.StatusOK,
-				gin.H{"status": "ready"},
+				gin.H{
+					"status": "ready",
+				},
 			)
 		},
 	)
 
-	apiV1 := router.Group("/api/v1")
+	apiV1 := router.Group(
+		"/api/v1",
+	)
 
 	handler.NewUserHandler(
 		userService,
@@ -340,14 +418,18 @@ func gracefulShutdown(
 	)
 	defer cancel()
 
-	if err := httpServer.Shutdown(ctx); err != nil {
+	if err := httpServer.Shutdown(
+		ctx,
+	); err != nil {
 		log.Error(
 			"http shutdown",
 			zap.Error(err),
 		)
 	}
 
-	grpcStopped := make(chan struct{})
+	grpcStopped := make(
+		chan struct{},
+	)
 
 	go func() {
 		grpcServer.GracefulStop()
@@ -356,11 +438,15 @@ func gracefulShutdown(
 
 	select {
 	case <-grpcStopped:
-		log.Info("gRPC server stopped gracefully")
+		log.Info(
+			"gRPC server stopped gracefully",
+		)
+
 	case <-ctx.Done():
 		log.Warn(
 			"gRPC graceful shutdown timed out; forcing stop",
 		)
+
 		grpcServer.Stop()
 	}
 
@@ -378,7 +464,11 @@ func initTracer(
 
 	exporter, err := otlptracegrpc.New(
 		ctx,
-		otlptracegrpc.WithEndpoint(cfg.OTLPEndpoint),
+
+		otlptracegrpc.WithEndpoint(
+			cfg.OTLPEndpoint,
+		),
+
 		otlptracegrpc.WithInsecure(),
 	)
 	if err != nil {
@@ -390,11 +480,18 @@ func initTracer(
 
 	tracerProvider := sdktrace.NewTracerProvider(
 		sdktrace.WithBatcher(exporter),
+
 		sdktrace.WithResource(
 			resource.NewWithAttributes(
 				semconv.SchemaURL,
-				semconv.ServiceName(cfg.ServiceName),
-				semconv.ServiceVersion(cfg.ServiceVersion),
+
+				semconv.ServiceName(
+					cfg.ServiceName,
+				),
+
+				semconv.ServiceVersion(
+					cfg.ServiceVersion,
+				),
 			),
 		),
 	)

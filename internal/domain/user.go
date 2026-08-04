@@ -24,9 +24,16 @@ const (
 	StatusDeleted   UserStatus = "deleted"
 )
 
+type TokenType string
+
+const (
+	TokenTypeAccess  TokenType = "access"
+	TokenTypeRefresh TokenType = "refresh"
+)
+
 // User is the framework-independent representation used by the service and
-// repository contracts. Persistence and transport layers must map their own
-// types to and from this entity.
+// repository contracts. Persistence and transport layers map their own types
+// to and from this entity.
 type User struct {
 	ID           string
 	Email        string
@@ -49,9 +56,29 @@ type TokenPair struct {
 }
 
 type TokenClaims struct {
-	UserID string
-	Email  string
-	Roles  []string
+	UserID    string
+	Email     string
+	Roles     []string
+	TokenType TokenType
+	TokenID   string
+	SessionID string
+	ExpiresAt time.Time
+}
+
+// AuthSession represents one authenticated login.
+//
+// The access and refresh JWTs share the session ID but have different token
+// identifiers. Replacing these identifiers during refresh invalidates both
+// previously issued tokens.
+type AuthSession struct {
+	ID             string
+	UserID         string
+	Email          string
+	Roles          []string
+	AccessTokenID  string
+	RefreshTokenID string
+	CreatedAt      time.Time
+	ExpiresAt      time.Time
 }
 
 type CreateUserRequest struct {
@@ -97,14 +124,93 @@ type UserRepository interface {
 	List(ctx context.Context, req ListUsersRequest) ([]*User, int64, error)
 }
 
+// AuthSessionStore is the persistence boundary for active authentication
+// sessions. Rotate must be concurrency-safe so the same refresh token cannot
+// be successfully reused by concurrent requests.
+type AuthSessionStore interface {
+	Create(
+		ctx context.Context,
+		session *AuthSession,
+		ttl time.Duration,
+	) error
+
+	Get(
+		ctx context.Context,
+		sessionID string,
+	) (*AuthSession, error)
+
+	Rotate(
+		ctx context.Context,
+		sessionID string,
+		currentRefreshTokenID string,
+		next *AuthSession,
+		ttl time.Duration,
+	) error
+
+	Delete(
+		ctx context.Context,
+		sessionID string,
+	) error
+
+	DeleteAllForUser(
+		ctx context.Context,
+		userID string,
+	) error
+}
+
 type UserService interface {
-	CreateUser(ctx context.Context, req CreateUserRequest) (*User, error)
-	GetUser(ctx context.Context, id string) (*User, error)
-	GetUserByEmail(ctx context.Context, email string) (*User, error)
-	UpdateUser(ctx context.Context, req UpdateUserRequest) (*User, error)
-	DeleteUser(ctx context.Context, id string) error
-	ListUsers(ctx context.Context, req ListUsersRequest) (*ListUsersResponse, error)
-	Authenticate(ctx context.Context, req AuthRequest) (*User, *TokenPair, error)
-	ValidateToken(ctx context.Context, token string) (*TokenClaims, error)
-	RefreshToken(ctx context.Context, refreshToken string) (*TokenPair, error)
+	CreateUser(
+		ctx context.Context,
+		req CreateUserRequest,
+	) (*User, error)
+
+	GetUser(
+		ctx context.Context,
+		id string,
+	) (*User, error)
+
+	GetUserByEmail(
+		ctx context.Context,
+		email string,
+	) (*User, error)
+
+	UpdateUser(
+		ctx context.Context,
+		req UpdateUserRequest,
+	) (*User, error)
+
+	DeleteUser(
+		ctx context.Context,
+		id string,
+	) error
+
+	ListUsers(
+		ctx context.Context,
+		req ListUsersRequest,
+	) (*ListUsersResponse, error)
+
+	Authenticate(
+		ctx context.Context,
+		req AuthRequest,
+	) (*User, *TokenPair, error)
+
+	ValidateToken(
+		ctx context.Context,
+		token string,
+	) (*TokenClaims, error)
+
+	RefreshToken(
+		ctx context.Context,
+		refreshToken string,
+	) (*TokenPair, error)
+
+	Logout(
+		ctx context.Context,
+		accessToken string,
+	) error
+
+	LogoutAll(
+		ctx context.Context,
+		accessToken string,
+	) error
 }
