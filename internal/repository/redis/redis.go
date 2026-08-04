@@ -4,21 +4,31 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"storemesh-user-service/internal/models"
 	"time"
 
-	"storemesh-user-service/internal/domain"
-
 	"github.com/redis/go-redis/v9"
+
+	"storemesh-user-service/internal/domain"
 )
 
-// sessionData is what we store in Redis — not the domain.User directly,
-// just the fields needed to reconstruct a TokenClaims without a DB round-trip.
 type sessionData struct {
 	UserID    string    `json:"user_id"`
 	Email     string    `json:"email"`
 	Roles     []string  `json:"roles"`
 	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// cachedUserProfile deliberately excludes PasswordHash. Cached profile data is
+// intended for read-only presentation use and must never contain credentials.
+type cachedUserProfile struct {
+	ID        string            `json:"id"`
+	Email     string            `json:"email"`
+	FirstName string            `json:"first_name"`
+	LastName  string            `json:"last_name"`
+	Phone     string            `json:"phone"`
+	Status    domain.UserStatus `json:"status"`
+	CreatedAt time.Time         `json:"created_at"`
+	UpdatedAt time.Time         `json:"updated_at"`
 }
 
 type SessionCache struct {
@@ -29,40 +39,59 @@ func NewSessionCache(rdb *redis.Client) *SessionCache {
 	return &SessionCache{rdb: rdb}
 }
 
-// StoreSession persists a validated token's claims so ValidateToken
-// can be answered from Redis without a DB hit on every gRPC call.
-func (c *SessionCache) StoreSession(ctx context.Context, tokenHash string, claims *domain.TokenClaims, ttl time.Duration) error {
+func (c *SessionCache) StoreSession(
+	ctx context.Context,
+	tokenHash string,
+	claims *domain.TokenClaims,
+	ttl time.Duration,
+) error {
 	data := sessionData{
 		UserID:    claims.UserID,
 		Email:     claims.Email,
 		Roles:     claims.Roles,
 		ExpiresAt: time.Now().Add(ttl),
 	}
-	b, err := json.Marshal(data)
+
+	payload, err := json.Marshal(data)
 	if err != nil {
 		return fmt.Errorf("marshal session: %w", err)
 	}
-	return c.rdb.Set(ctx, sessionKey(tokenHash), b, ttl).Err()
+
+	if err := c.rdb.Set(
+		ctx,
+		sessionKey(tokenHash),
+		payload,
+		ttl,
+	).Err(); err != nil {
+		return fmt.Errorf("store session: %w", err)
+	}
+
+	return nil
 }
 
-// GetSession retrieves cached claims by token hash.
-// Returns domain.ErrNotFound when the key has expired or never existed.
-func (c *SessionCache) GetSession(ctx context.Context, tokenHash string) (*domain.TokenClaims, error) {
-	b, err := c.rdb.Get(ctx, sessionKey(tokenHash)).Bytes()
+func (c *SessionCache) GetSession(
+	ctx context.Context,
+	tokenHash string,
+) (*domain.TokenClaims, error) {
+	payload, err := c.rdb.Get(
+		ctx,
+		sessionKey(tokenHash),
+	).Bytes()
 	if err != nil {
 		if err == redis.Nil {
 			return nil, domain.ErrNotFound
 		}
+
 		return nil, fmt.Errorf("get session: %w", err)
 	}
 
 	var data sessionData
-	if err := json.Unmarshal(b, &data); err != nil {
+	if err := json.Unmarshal(payload, &data); err != nil {
 		return nil, fmt.Errorf("unmarshal session: %w", err)
 	}
 
 	if time.Now().After(data.ExpiresAt) {
-		_ = c.rdb.Del(ctx, sessionKey(tokenHash))
+		_ = c.rdb.Del(ctx, sessionKey(tokenHash)).Err()
 		return nil, domain.ErrInvalidToken
 	}
 
@@ -73,89 +102,200 @@ func (c *SessionCache) GetSession(ctx context.Context, tokenHash string) (*domai
 	}, nil
 }
 
-// RevokeSession deletes a session — used on logout or forced sign-out.
-func (c *SessionCache) RevokeSession(ctx context.Context, tokenHash string) error {
-	return c.rdb.Del(ctx, sessionKey(tokenHash)).Err()
+func (c *SessionCache) RevokeSession(
+	ctx context.Context,
+	tokenHash string,
+) error {
+	if err := c.rdb.Del(
+		ctx,
+		sessionKey(tokenHash),
+	).Err(); err != nil {
+		return fmt.Errorf("revoke session: %w", err)
+	}
+
+	return nil
 }
 
-// RevokeAllUserSessions deletes all active sessions for a user.
-// Uses a user→sessions index set to track keys.
-func (c *SessionCache) RevokeAllUserSessions(ctx context.Context, userID string) error {
-	keys, err := c.rdb.SMembers(ctx, userSessionsKey(userID)).Result()
+func (c *SessionCache) RevokeAllUserSessions(
+	ctx context.Context,
+	userID string,
+) error {
+	keys, err := c.rdb.SMembers(
+		ctx,
+		userSessionsKey(userID),
+	).Result()
 	if err != nil {
-		return err
+		return fmt.Errorf("list user sessions: %w", err)
 	}
+
 	if len(keys) == 0 {
 		return nil
 	}
-	pipe := c.rdb.Pipeline()
-	for _, k := range keys {
-		pipe.Del(ctx, k)
+
+	pipeline := c.rdb.Pipeline()
+	for _, key := range keys {
+		pipeline.Del(ctx, key)
 	}
-	pipe.Del(ctx, userSessionsKey(userID))
-	_, err = pipe.Exec(ctx)
-	return err
+	pipeline.Del(ctx, userSessionsKey(userID))
+
+	if _, err := pipeline.Exec(ctx); err != nil {
+		return fmt.Errorf("revoke user sessions: %w", err)
+	}
+
+	return nil
 }
 
-// TrackUserSession adds a session key to the user's session index.
-// Call after StoreSession so RevokeAllUserSessions can find it.
-func (c *SessionCache) TrackUserSession(ctx context.Context, userID, tokenHash string, ttl time.Duration) error {
-	pipe := c.rdb.Pipeline()
-	pipe.SAdd(ctx, userSessionsKey(userID), sessionKey(tokenHash))
-	pipe.Expire(ctx, userSessionsKey(userID), ttl)
-	_, err := pipe.Exec(ctx)
-	return err
+func (c *SessionCache) TrackUserSession(
+	ctx context.Context,
+	userID string,
+	tokenHash string,
+	ttl time.Duration,
+) error {
+	pipeline := c.rdb.Pipeline()
+	pipeline.SAdd(
+		ctx,
+		userSessionsKey(userID),
+		sessionKey(tokenHash),
+	)
+	pipeline.Expire(
+		ctx,
+		userSessionsKey(userID),
+		ttl,
+	)
+
+	if _, err := pipeline.Exec(ctx); err != nil {
+		return fmt.Errorf("track user session: %w", err)
+	}
+
+	return nil
 }
 
-// ── Profile cache ─────────────────────────────────────────────────────────────
+func (c *SessionCache) CacheUserProfile(
+	ctx context.Context,
+	user *domain.User,
+	ttl time.Duration,
+) error {
+	if user == nil {
+		return fmt.Errorf(
+			"%w: user is required",
+			domain.ErrInvalidInput,
+		)
+	}
 
-// CacheUserProfile stores a lightweight user profile for fast reads
-// by the gqlgen GraphQL server — avoids a DB call per resolver field.
-func (c *SessionCache) CacheUserProfile(ctx context.Context, user *models.User, ttl time.Duration) error {
-	b, err := json.Marshal(user)
+	profile := cachedUserProfile{
+		ID:        user.ID,
+		Email:     user.Email,
+		FirstName: user.FirstName,
+		LastName:  user.LastName,
+		Phone:     user.Phone,
+		Status:    user.Status,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+	}
+
+	payload, err := json.Marshal(profile)
 	if err != nil {
-		return err
+		return fmt.Errorf("marshal user profile: %w", err)
 	}
-	return c.rdb.Set(ctx, profileKey(user.ID.String()), b, ttl).Err()
+
+	if err := c.rdb.Set(
+		ctx,
+		profileKey(user.ID),
+		payload,
+		ttl,
+	).Err(); err != nil {
+		return fmt.Errorf("cache user profile: %w", err)
+	}
+
+	return nil
 }
 
-// GetCachedUserProfile retrieves a cached user profile.
-func (c *SessionCache) GetCachedUserProfile(ctx context.Context, userID string) (*models.User, error) {
-	b, err := c.rdb.Get(ctx, profileKey(userID)).Bytes()
+func (c *SessionCache) GetCachedUserProfile(
+	ctx context.Context,
+	userID string,
+) (*domain.User, error) {
+	payload, err := c.rdb.Get(
+		ctx,
+		profileKey(userID),
+	).Bytes()
 	if err != nil {
 		if err == redis.Nil {
 			return nil, domain.ErrNotFound
 		}
-		return nil, err
+
+		return nil, fmt.Errorf(
+			"get cached user profile: %w",
+			err,
+		)
 	}
-	var user models.User
-	return &user, json.Unmarshal(b, &user)
+
+	var profile cachedUserProfile
+	if err := json.Unmarshal(payload, &profile); err != nil {
+		return nil, fmt.Errorf(
+			"unmarshal user profile: %w",
+			err,
+		)
+	}
+
+	return &domain.User{
+		ID:        profile.ID,
+		Email:     profile.Email,
+		FirstName: profile.FirstName,
+		LastName:  profile.LastName,
+		Phone:     profile.Phone,
+		Status:    profile.Status,
+		CreatedAt: profile.CreatedAt,
+		UpdatedAt: profile.UpdatedAt,
+	}, nil
 }
 
-// InvalidateUserProfile removes the cached profile — call after Update or Delete.
-func (c *SessionCache) InvalidateUserProfile(ctx context.Context, userID string) error {
-	return c.rdb.Del(ctx, profileKey(userID)).Err()
+func (c *SessionCache) InvalidateUserProfile(
+	ctx context.Context,
+	userID string,
+) error {
+	if err := c.rdb.Del(
+		ctx,
+		profileKey(userID),
+	).Err(); err != nil {
+		return fmt.Errorf(
+			"invalidate user profile: %w",
+			err,
+		)
+	}
+
+	return nil
 }
 
-// ── Key helpers ───────────────────────────────────────────────────────────────
+func sessionKey(tokenHash string) string {
+	return "session:" + tokenHash
+}
 
-func sessionKey(tokenHash string) string   { return "session:" + tokenHash }
-func userSessionsKey(userID string) string { return "user:sessions:" + userID }
-func profileKey(userID string) string      { return "user:profile:" + userID }
+func userSessionsKey(userID string) string {
+	return "user:sessions:" + userID
+}
 
-// ── Connection helper ─────────────────────────────────────────────────────────
+func profileKey(userID string) string {
+	return "user:profile:" + userID
+}
 
-// NewRedisClient parses a Redis URL and returns a connected client.
 func NewRedisClient(redisURL string) (*redis.Client, error) {
 	opts, err := redis.ParseURL(redisURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse redis url: %w", err)
 	}
-	rdb := redis.NewClient(opts)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+
+	client := redis.NewClient(opts)
+
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		5*time.Second,
+	)
 	defer cancel()
-	if err := rdb.Ping(ctx).Err(); err != nil {
+
+	if err := client.Ping(ctx).Err(); err != nil {
+		_ = client.Close()
 		return nil, fmt.Errorf("ping redis: %w", err)
 	}
-	return rdb, nil
+
+	return client, nil
 }

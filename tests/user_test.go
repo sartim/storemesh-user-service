@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"storemesh-user-service/internal/domain"
-	"storemesh-user-service/internal/models"
 	"storemesh-user-service/internal/repository"
 	"storemesh-user-service/internal/repository/sqlite"
 )
@@ -27,30 +26,24 @@ func setupUserRepo(
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 
-	t.Cleanup(
-		func() {
-			_ = sqlDB.Close()
-		},
-	)
+	t.Cleanup(func() {
+		_ = sqlDB.Close()
+	})
 
 	return repository.NewUserRepository(db)
 }
 
-func newTestUser(
-	email string,
-) *models.User {
-	return &models.User{
-		Email:     email,
-		Password:  "$2a$10$hashedpassword",
-		FirstName: "John",
-		LastName:  "Doe",
-		IsActive:  true,
+func newTestUser(email string) *domain.User {
+	return &domain.User{
+		Email:        email,
+		PasswordHash: "$2a$10$hashedpassword",
+		FirstName:    "John",
+		LastName:     "Doe",
+		Status:       domain.StatusActive,
 	}
 }
 
-func TestUserRepo_Create_Success(
-	t *testing.T,
-) {
+func TestUserRepo_Create_Success(t *testing.T) {
 	repo := setupUserRepo(t)
 	ctx := context.Background()
 
@@ -59,7 +52,11 @@ func TestUserRepo_Create_Success(
 	err := repo.Create(ctx, user)
 
 	require.NoError(t, err)
-	assert.NotEqual(t, uuid.Nil, user.ID)
+	assert.NotEmpty(t, user.ID)
+
+	_, err = uuid.Parse(user.ID)
+	require.NoError(t, err)
+
 	assert.False(t, user.CreatedAt.IsZero())
 	assert.False(t, user.UpdatedAt.IsZero())
 }
@@ -90,9 +87,7 @@ func TestUserRepo_Create_DuplicateEmail_ReturnsAlreadyExists(
 	)
 }
 
-func TestUserRepo_GetByID_Success(
-	t *testing.T,
-) {
+func TestUserRepo_GetByID_Success(t *testing.T) {
 	repo := setupUserRepo(t)
 	ctx := context.Background()
 
@@ -105,18 +100,18 @@ func TestUserRepo_GetByID_Success(
 
 	found, err := repo.GetByID(
 		ctx,
-		created.ID.String(),
+		created.ID,
 	)
 
 	require.NoError(t, err)
 	assert.Equal(t, created.ID, found.ID)
 	assert.Equal(t, created.Email, found.Email)
 	assert.Equal(t, created.FirstName, found.FirstName)
+	assert.Equal(t, created.PasswordHash, found.PasswordHash)
+	assert.Equal(t, domain.StatusActive, found.Status)
 }
 
-func TestUserRepo_GetByID_NotFound(
-	t *testing.T,
-) {
+func TestUserRepo_GetByID_NotFound(t *testing.T) {
 	repo := setupUserRepo(t)
 	ctx := context.Background()
 
@@ -147,15 +142,12 @@ func TestUserRepo_GetByID_DeletedUser_ReturnsNotFound(
 
 	require.NoError(
 		t,
-		repo.Delete(
-			ctx,
-			user.ID.String(),
-		),
+		repo.Delete(ctx, user.ID),
 	)
 
 	_, err := repo.GetByID(
 		ctx,
-		user.ID.String(),
+		user.ID,
 	)
 
 	assert.ErrorIs(
@@ -165,9 +157,7 @@ func TestUserRepo_GetByID_DeletedUser_ReturnsNotFound(
 	)
 }
 
-func TestUserRepo_GetByEmail_Success(
-	t *testing.T,
-) {
+func TestUserRepo_GetByEmail_Success(t *testing.T) {
 	repo := setupUserRepo(t)
 	ctx := context.Background()
 
@@ -188,11 +178,10 @@ func TestUserRepo_GetByEmail_Success(
 	require.NoError(t, err)
 	assert.Equal(t, created.ID, found.ID)
 	assert.Equal(t, created.Email, found.Email)
+	assert.Equal(t, created.PasswordHash, found.PasswordHash)
 }
 
-func TestUserRepo_GetByEmail_NotFound(
-	t *testing.T,
-) {
+func TestUserRepo_GetByEmail_NotFound(t *testing.T) {
 	repo := setupUserRepo(t)
 	ctx := context.Background()
 
@@ -208,9 +197,7 @@ func TestUserRepo_GetByEmail_NotFound(
 	)
 }
 
-func TestUserRepo_Update_Success(
-	t *testing.T,
-) {
+func TestUserRepo_Update_Success(t *testing.T) {
 	repo := setupUserRepo(t)
 	ctx := context.Background()
 
@@ -231,13 +218,17 @@ func TestUserRepo_Update_Success(
 
 	updated, err := repo.GetByID(
 		ctx,
-		user.ID.String(),
+		user.ID,
 	)
 
 	require.NoError(t, err)
 	assert.Equal(t, "Jane", updated.FirstName)
 	assert.Equal(t, "Smith", updated.LastName)
-	assert.Equal(t, "+254711111111", updated.Phone)
+	assert.Equal(
+		t,
+		"+254711111111",
+		updated.Phone,
+	)
 }
 
 func TestUserRepo_Update_UpdatedAt_Changes(
@@ -279,7 +270,7 @@ func TestUserRepo_Update_NonExistentUser_ReturnsNotFound(
 	ctx := context.Background()
 
 	user := newTestUser("ghost@example.com")
-	user.ID = uuid.New()
+	user.ID = uuid.NewString()
 
 	err := repo.Update(ctx, user)
 
@@ -290,9 +281,7 @@ func TestUserRepo_Update_NonExistentUser_ReturnsNotFound(
 	)
 }
 
-func TestUserRepo_Delete_SoftDeletes(
-	t *testing.T,
-) {
+func TestUserRepo_Delete_SoftDeletes(t *testing.T) {
 	repo := setupUserRepo(t)
 	ctx := context.Background()
 
@@ -307,14 +296,14 @@ func TestUserRepo_Delete_SoftDeletes(
 
 	err := repo.Delete(
 		ctx,
-		user.ID.String(),
+		user.ID,
 	)
 
 	require.NoError(t, err)
 
 	_, err = repo.GetByID(
 		ctx,
-		user.ID.String(),
+		user.ID,
 	)
 
 	assert.ErrorIs(
@@ -397,7 +386,7 @@ func TestUserRepo_List_FilterByStatus(
 	suspended := newTestUser(
 		"suspended@example.com",
 	)
-	suspended.IsActive = false
+	suspended.Status = domain.StatusSuspended
 
 	require.NoError(
 		t,
@@ -407,7 +396,7 @@ func TestUserRepo_List_FilterByStatus(
 	users, total, err := repo.List(
 		ctx,
 		domain.ListUsersRequest{
-			Status:  string(domain.StatusActive),
+			Status:  domain.StatusActive,
 			Page:    1,
 			PerPage: 20,
 		},
@@ -420,6 +409,28 @@ func TestUserRepo_List_FilterByStatus(
 		t,
 		"active@example.com",
 		users[0].Email,
+	)
+}
+
+func TestUserRepo_List_RejectsUnsupportedStatus(
+	t *testing.T,
+) {
+	repo := setupUserRepo(t)
+	ctx := context.Background()
+
+	_, _, err := repo.List(
+		ctx,
+		domain.ListUsersRequest{
+			Status:  domain.UserStatus("unknown"),
+			Page:    1,
+			PerPage: 20,
+		},
+	)
+
+	assert.ErrorIs(
+		t,
+		err,
+		domain.ErrInvalidInput,
 	)
 }
 
@@ -449,10 +460,7 @@ func TestUserRepo_List_ExcludesDeletedUsers(
 
 	require.NoError(
 		t,
-		repo.Delete(
-			ctx,
-			deleted.ID.String(),
-		),
+		repo.Delete(ctx, deleted.ID),
 	)
 
 	users, total, err := repo.List(
@@ -473,9 +481,7 @@ func TestUserRepo_List_ExcludesDeletedUsers(
 	)
 }
 
-func TestUserRepo_List_SecondPage(
-	t *testing.T,
-) {
+func TestUserRepo_List_SecondPage(t *testing.T) {
 	repo := setupUserRepo(t)
 	ctx := context.Background()
 
