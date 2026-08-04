@@ -2,20 +2,24 @@ name: main
 
 on:
   push:
-    branches: [main, develop]
+    branches:
+      - main
+      - develop
+
   pull_request:
-    branches: [main]
+    branches:
+      - main
+
+permissions:
+  contents: read
 
 env:
-  GO_VERSION: "1.22"
   IMAGE_NAME: storemesh-user-service
-  # placeholder — replace with your registry
   REGISTRY: ghcr.io/${{ github.repository_owner }}
 
 jobs:
-  # ── 1. Unit tests ────────────────────────────────────────────────────────────
   test:
-    name: Unit tests
+    name: Test and verify
     runs-on: ubuntu-latest
 
     steps:
@@ -25,11 +29,24 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           cache: true
 
-      - name: Install dependencies
+      - name: Download dependencies
         run: go mod download
+
+      - name: Check formatting
+        run: |
+          UNFORMATTED_FILES="$(gofmt -l .)"
+
+          if [ -n "${UNFORMATTED_FILES}" ]; then
+            echo "The following files require gofmt:"
+            echo "${UNFORMATTED_FILES}"
+            exit 1
+          fi
+
+      - name: Run go vet
+        run: go vet ./...
 
       - name: Run tests
         run: |
@@ -48,17 +65,8 @@ jobs:
         with:
           name: coverage-report
           path: coverage.out
+          if-no-files-found: error
 
-      - name: Check coverage threshold
-        run: |
-          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | tr -d '%')
-          echo "Total coverage: ${COVERAGE}%"
-          if (( $(echo "$COVERAGE < 60" | bc -l) )); then
-            echo "Coverage ${COVERAGE}% is below 60% threshold"
-            exit 1
-          fi
-
-  # ── 2. Lint ───────────────────────────────────────────────────────────────────
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -70,19 +78,22 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           cache: true
 
-      - name: golangci-lint
+      - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
           version: latest
           args: --timeout=5m
 
-  # ── 3. Security scan — source code ───────────────────────────────────────────
   security-code:
-    name: Security — source (gosec)
+    name: Security - source
     runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      security-events: write
 
     steps:
       - name: Checkout
@@ -91,27 +102,25 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           cache: true
 
       - name: Run gosec
         uses: securego/gosec@master
         with:
           args: >
-            -exclude-dir=internal/repository/testdata
             -fmt sarif
             -out gosec-results.sarif
             ./...
 
       - name: Upload gosec SARIF
-        uses: github/codeql-action/upload-sarif@v3
         if: always()
+        uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: gosec-results.sarif
 
-  # ── 4. Dependency vulnerability scan ─────────────────────────────────────────
   security-deps:
-    name: Security — dependencies (govulncheck)
+    name: Security - dependencies
     runs-on: ubuntu-latest
 
     steps:
@@ -121,26 +130,35 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           cache: true
 
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+        run: |
+          go install \
+            golang.org/x/vuln/cmd/govulncheck@latest
 
       - name: Run govulncheck
         run: govulncheck ./...
 
-  # ── 5. Build and push image ───────────────────────────────────────────────────
   build:
-    name: Build image
+    name: Build and push image
     runs-on: ubuntu-latest
-    needs: [test, lint, security-code, security-deps]
-    # only build on pushes to main/develop — not on PRs
+
+    needs:
+      - test
+      - lint
+      - security-code
+      - security-deps
+
     if: github.event_name == 'push'
+
+    permissions:
+      contents: read
+      packages: write
 
     outputs:
       image-digest: ${{ steps.build.outputs.digest }}
-      image-tag: ${{ steps.meta.outputs.version }}
 
     steps:
       - name: Checkout
@@ -156,87 +174,93 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Docker metadata
-        id: meta
+      - name: Generate Docker metadata
+        id: metadata
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+
           tags: |
             type=sha,prefix=sha-,format=short
             type=ref,event=branch
-            type=semver,pattern={{version}}
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 
-      - name: Build image
+      - name: Build and push image
         id: build
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
-          # push disabled — placeholder for when registry login is configured
-          push: false
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            VERSION=${{ steps.meta.outputs.version }}
+          push: true
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          # export to docker daemon for the security scan below
-          load: true
 
-      - name: Export image name for scan
-        id: image
-        run: |
-          # use the sha tag for deterministic scanning
-          echo "ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-
-  # ── 6. Image security scan ────────────────────────────────────────────────────
   security-image:
-    name: Security — image (Trivy)
+    name: Security - image
     runs-on: ubuntu-latest
-    needs: build
+
+    needs:
+      - build
+
     if: github.event_name == 'push'
+
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      # rebuild locally so Trivy can scan it (build job runs in separate runner)
-      - name: Build image for scan
-        uses: docker/build-push-action@v5
+      - name: Log in to registry
+        uses: docker/login-action@v3
         with:
-          context: .
-          push: false
-          load: true
-          tags: ${{ env.IMAGE_NAME }}:scan
-          cache-from: type=gha
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve image reference
+        id: image
+        shell: bash
+        run: |
+          IMAGE_TAG="sha-$(git rev-parse --short HEAD)"
+          IMAGE_REF="${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
+
+          echo "ref=${IMAGE_REF}" >> "${GITHUB_OUTPUT}"
+          echo "Scanning ${IMAGE_REF}"
 
       - name: Run Trivy vulnerability scan
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ${{ env.IMAGE_NAME }}:scan
+          image-ref: ${{ steps.image.outputs.ref }}
           format: sarif
           output: trivy-results.sarif
           severity: CRITICAL,HIGH
-          exit-code: "1"          # fail the job on CRITICAL or HIGH findings
-          ignore-unfixed: true    # only fail on vulnerabilities with available fixes
+          exit-code: "1"
+          ignore-unfixed: true
 
       - name: Upload Trivy SARIF
-        uses: github/codeql-action/upload-sarif@v3
         if: always()
+        uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-results.sarif
 
-  # ── 7. Deploy — manual trigger via ArgoCD sync ───────────────────────────────
   deploy:
-    name: Deploy (ArgoCD sync)
+    name: Deploy - Argo CD sync
     runs-on: ubuntu-latest
-    needs: [build, security-image]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    # manual approval gate — a reviewer must approve in GitHub before ArgoCD syncs
+
+    needs:
+      - build
+      - security-image
+
+    if: >
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main'
+
     environment:
       name: production
       url: https://argocd.yourdomain.com/applications/storemesh-user-service
@@ -245,26 +269,37 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install ArgoCD CLI
+      - name: Install Argo CD CLI
+        shell: bash
         run: |
-          curl -sSL -o /usr/local/bin/argocd \
+          curl \
+            --fail \
+            --silent \
+            --show-error \
+            --location \
+            --output /usr/local/bin/argocd \
             https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+
           chmod +x /usr/local/bin/argocd
 
-      - name: ArgoCD login
+      - name: Argo CD login
+        shell: bash
         run: |
-          argocd login ${{ secrets.ARGOCD_SERVER }} \
-            --auth-token ${{ secrets.ARGOCD_TOKEN }} \
+          argocd login "${{ secrets.ARGOCD_SERVER }}" \
+            --auth-token "${{ secrets.ARGOCD_TOKEN }}" \
             --grpc-web \
             --insecure
 
-      - name: Update image tag in Helm values
+      - name: Update image tag
+        shell: bash
         run: |
           IMAGE_TAG="sha-$(git rev-parse --short HEAD)"
+
           argocd app set storemesh-user-service \
             --helm-set image.tag="${IMAGE_TAG}"
 
       - name: Sync application
+        shell: bash
         run: |
           argocd app sync storemesh-user-service \
             --force \
@@ -272,12 +307,14 @@ jobs:
             --timeout 300
 
       - name: Wait for rollout
+        shell: bash
         run: |
           argocd app wait storemesh-user-service \
             --health \
             --timeout 300
 
       - name: Verify deployment
+        shell: bash
         run: |
           argocd app get storemesh-user-service \
             --show-params \

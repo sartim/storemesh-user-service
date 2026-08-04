@@ -1,17 +1,8 @@
 // Command server runs storemesh-user-service.
 //
-// It starts TWO servers from ONE process:
-//   - gRPC on :50051 — the real traffic path, called by the gqlgen GraphQL server
-//   - HTTP on :8080  — health checks (/healthz, /readyz) + REST API
-//
-// Both servers share the same domain.UserService instance, same DB pool, same
-// Redis client. internal/server/grpc and internal/server/http/handler are thin
-// translation layers over that one shared service — no business logic duplication.
-//
-// This is intentionally ONE binary, not two. They are not independently scaled,
-// they share all infrastructure, and Kubernetes manages them as a single
-// Deployment/Pod. Use separate cmd/ entrypoints only for genuinely separate
-// processes — e.g. a future cmd/migrate CLI or cmd/worker background consumer.
+// It starts two servers from one process:
+//   - gRPC on :50051 for internal service-to-service traffic
+//   - HTTP on :8080 for health checks and the REST API
 package main
 
 import (
@@ -21,10 +12,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"storemesh-user-service/internal/helpers/env"
-	"storemesh-user-service/internal/models"
-	postgres "storemesh-user-service/internal/repository/postgres"
-	"storemesh-user-service/internal/repository/redis"
 	"syscall"
 	"time"
 
@@ -43,142 +30,214 @@ import (
 	userv1 "storemesh-user-service/gen/user/v1"
 	"storemesh-user-service/internal/config"
 	"storemesh-user-service/internal/domain"
+	"storemesh-user-service/internal/helpers/env"
 	"storemesh-user-service/internal/middleware"
 	"storemesh-user-service/internal/repository"
+	postgres "storemesh-user-service/internal/repository/postgres"
+	redisrepository "storemesh-user-service/internal/repository/redis"
 	grpcserver "storemesh-user-service/internal/server/grpc"
 	"storemesh-user-service/internal/server/http/handler"
 	"storemesh-user-service/internal/service"
 )
 
-func init() {
-	gin.ForceConsoleColor()
+const grpcUserServiceName = "user.v1.UserService"
 
-	// Override logging
-	//log.SetPrefix("\u001b[31mERROR: \u001b[0m")
-	//log.SetFlags(log.LstdFlags | log.Ldate | log.Lmicroseconds | log.Llongfile)
-
-	// Load environment variables
-	// Check if .env file exists
+func main() {
 	if _, err := os.Stat(".env"); err == nil {
-		env.LoadEnvVars()
-	}
-	cfg, err := config.Load()
-	if err != nil {
-		fmt.Println("Error loading .env file")
-	}
-	if cfg != nil {
-		dsn := cfg.DatabaseURL
-		maxOpen := 100
-		maxIdle := 100
-		connMaxLifetime := time.Duration(10 * time.Minute)
-
-		_, err := postgres.OpenPostgres(dsn, maxOpen, maxIdle, connMaxLifetime)
-		if err != nil {
-			//
+		if err := env.LoadEnvVars(); err != nil {
+			fmt.Fprintf(os.Stderr, "load .env: %v\n", err)
+			os.Exit(1)
 		}
 	}
 
-}
+	log, err := zap.NewProduction()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "create logger: %v\n", err)
+		os.Exit(1)
+	}
 
-func main() {
-	log, _ := zap.NewProduction()
-	defer log.Sync()
+	defer func() {
+		_ = log.Sync()
+	}()
 
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatal("load config", zap.Error(err))
 	}
 
-	tp, err := initTracer(cfg)
+	tracerProvider, err := initTracer(cfg)
 	if err != nil {
-		log.Warn("tracing unavailable, continuing without it", zap.Error(err))
+		log.Warn(
+			"tracing unavailable, continuing without it",
+			zap.Error(err),
+		)
 	} else {
-		otel.SetTracerProvider(tp)
+		otel.SetTracerProvider(tracerProvider)
+
 		defer func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(
+				context.Background(),
+				5*time.Second,
+			)
 			defer cancel()
-			_ = tp.Shutdown(ctx)
+
+			if err := tracerProvider.Shutdown(ctx); err != nil {
+				log.Warn(
+					"shutdown tracer provider",
+					zap.Error(err),
+				)
+			}
 		}()
 	}
 
-	// ── Database ──────────────────────────────────────────────────────────────
-	db, err := postgres.OpenPostgres(cfg.DatabaseURL, cfg.DBMaxOpenConns, cfg.DBMaxIdleConns, cfg.DBConnMaxLifetime)
+	db, err := postgres.OpenPostgres(
+		cfg.DatabaseURL,
+		cfg.DBMaxOpenConns,
+		cfg.DBMaxIdleConns,
+		cfg.DBConnMaxLifetime,
+	)
 	if err != nil {
 		log.Fatal("open postgres", zap.Error(err))
 	}
+
+	sqlDB, err := db.DB()
+	if err != nil {
+		log.Fatal(
+			"get postgres connection pool",
+			zap.Error(err),
+		)
+	}
+
+	defer func() {
+		if err := sqlDB.Close(); err != nil {
+			log.Warn("close postgres", zap.Error(err))
+		}
+	}()
+
 	log.Info("postgres connected")
 
 	if err := postgres.MigrateAndSeed(db); err != nil {
 		log.Fatal("migrate and seed", zap.Error(err))
 	}
+
 	log.Info("migrations applied")
 
-	// ── Redis ─────────────────────────────────────────────────────────────────
-	rdb, err := redis.NewRedisClient(cfg.RedisURL)
+	redisClient, err := redisrepository.NewRedisClient(cfg.RedisURL)
 	if err != nil {
 		log.Fatal("open redis", zap.Error(err))
 	}
-	defer rdb.Close()
+
+	defer func() {
+		if err := redisClient.Close(); err != nil {
+			log.Warn("close redis", zap.Error(err))
+		}
+	}()
+
 	log.Info("redis connected")
 
-	userModel := models.User{}
-	// ── Repositories + ONE shared service instance ───────────────────────────
-	userRepo := repository.NewUserRepository(postgres.DB, userModel)
+	userRepository := repository.NewUserRepository(db)
 
-	svc := service.NewUserService(
-		userRepo,
+	userService := service.NewUserService(
+		userRepository,
 		log,
 		cfg.JWTSecret,
 		cfg.JWTAccessTokenTTL,
 		cfg.JWTRefreshTokenTTL,
 	)
 
-	// receives a fatal error from either server so the process exits cleanly
-	errCh := make(chan error, 2)
+	serverErrors := make(chan error, 2)
 
-	// ── 1. Start gRPC server ──────────────────────────────────────────────────
-	grpcSrv, healthSrv := buildGRPCServer(svc, log)
+	grpcServer, healthServer := buildGRPCServer(
+		userService,
+		log,
+	)
 
 	go func() {
-		lis, err := net.Listen("tcp", ":"+cfg.GRPCPort)
+		listener, err := net.Listen(
+			"tcp",
+			":"+cfg.GRPCPort,
+		)
 		if err != nil {
-			errCh <- fmt.Errorf("grpc listen: %w", err)
+			serverErrors <- fmt.Errorf(
+				"grpc listen: %w",
+				err,
+			)
 			return
 		}
-		log.Info("gRPC server listening", zap.String("port", cfg.GRPCPort))
-		if err := grpcSrv.Serve(lis); err != nil {
-			errCh <- fmt.Errorf("grpc serve: %w", err)
+
+		log.Info(
+			"gRPC server listening",
+			zap.String("port", cfg.GRPCPort),
+		)
+
+		if err := grpcServer.Serve(listener); err != nil {
+			serverErrors <- fmt.Errorf(
+				"grpc serve: %w",
+				err,
+			)
 		}
 	}()
 
-	// ── 2. Start HTTP server ──────────────────────────────────────────────────
-	httpSrv := buildHTTPServer(cfg, svc, log)
+	httpServer := buildHTTPServer(
+		cfg,
+		userService,
+		log,
+	)
 
 	go func() {
-		log.Info("HTTP server listening", zap.String("port", cfg.HTTPPort))
-		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			errCh <- fmt.Errorf("http serve: %w", err)
+		log.Info(
+			"HTTP server listening",
+			zap.String("port", cfg.HTTPPort),
+		)
+
+		if err := httpServer.ListenAndServe(); err != nil &&
+			err != http.ErrServerClosed {
+			serverErrors <- fmt.Errorf(
+				"http serve: %w",
+				err,
+			)
 		}
 	}()
 
-	// ── 3. Block until shutdown signal or a fatal error from either server ───
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	shutdownSignals := make(chan os.Signal, 1)
+
+	signal.Notify(
+		shutdownSignals,
+		syscall.SIGINT,
+		syscall.SIGTERM,
+	)
+
+	defer signal.Stop(shutdownSignals)
 
 	select {
-	case sig := <-quit:
-		log.Info("shutdown signal received", zap.String("signal", sig.String()))
-	case err := <-errCh:
-		log.Error("fatal server error, shutting down", zap.Error(err))
+	case signalReceived := <-shutdownSignals:
+		log.Info(
+			"shutdown signal received",
+			zap.String(
+				"signal",
+				signalReceived.String(),
+			),
+		)
+	case serverErr := <-serverErrors:
+		log.Error(
+			"fatal server error, shutting down",
+			zap.Error(serverErr),
+		)
 	}
 
-	gracefulShutdown(log, healthSrv, grpcSrv, httpSrv)
+	gracefulShutdown(
+		log,
+		healthServer,
+		grpcServer,
+		httpServer,
+	)
 }
 
-// ── gRPC server ───────────────────────────────────────────────────────────────
-
-func buildGRPCServer(svc domain.UserService, log *zap.Logger) (*grpc.Server, *health.Server) {
-	srv := grpc.NewServer(
+func buildGRPCServer(
+	userService domain.UserService,
+	log *zap.Logger,
+) (*grpc.Server, *health.Server) {
+	server := grpc.NewServer(
 		middleware.TracingStatsHandler(),
 		grpc.ChainUnaryInterceptor(
 			middleware.Recovery(log),
@@ -187,99 +246,158 @@ func buildGRPCServer(svc domain.UserService, log *zap.Logger) (*grpc.Server, *he
 	)
 
 	userv1.RegisterUserServiceServer(
-		srv,
-		grpcserver.NewUserGRPCServer(svc),
+		server,
+		grpcserver.NewUserGRPCServer(userService),
 	)
 
-	// health check — Kubernetes readiness/liveness probes and Istio outlier
-	// detection both depend on this being registered
-	healthSrv := health.NewServer()
-	grpc_health_v1.RegisterHealthServer(srv, healthSrv)
-	healthSrv.SetServingStatus("user.UserService", grpc_health_v1.HealthCheckResponse_SERVING)
+	healthServer := health.NewServer()
 
-	// reflection enables grpcurl and Kiali to introspect the service without
-	// needing the .proto file locally
-	reflection.Register(srv)
+	grpc_health_v1.RegisterHealthServer(
+		server,
+		healthServer,
+	)
 
-	return srv, healthSrv
+	healthServer.SetServingStatus(
+		grpcUserServiceName,
+		grpc_health_v1.HealthCheckResponse_SERVING,
+	)
+
+	reflection.Register(server)
+
+	return server, healthServer
 }
 
-// ── HTTP server ───────────────────────────────────────────────────────────────
-
-func buildHTTPServer(cfg *config.Config, svc domain.UserService, log *zap.Logger) *http.Server {
+func buildHTTPServer(
+	cfg *config.Config,
+	userService domain.UserService,
+	log *zap.Logger,
+) *http.Server {
 	if cfg.Environment == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
 	router := gin.New()
+
 	router.Use(
 		middleware.RequestID(),
-		//middleware.Recovery(log),
-		//middleware.Logging(log),
+		gin.Recovery(),
 		middleware.CORS(),
 	)
 
-	// unauthenticated health endpoints, kept outside /api/v1 so k8s probes stay simple
-	router.GET("/healthz", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "ok"})
-	})
-	router.GET("/readyz", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "ready"})
-	})
+	router.GET(
+		"/healthz",
+		func(c *gin.Context) {
+			c.JSON(
+				http.StatusOK,
+				gin.H{"status": "ok"},
+			)
+		},
+	)
 
-	v1 := router.Group("/api/v1")
-	handler.NewUserHandler(svc, log).RegisterRoutes(v1)
+	router.GET(
+		"/readyz",
+		func(c *gin.Context) {
+			c.JSON(
+				http.StatusOK,
+				gin.H{"status": "ready"},
+			)
+		},
+	)
+
+	apiV1 := router.Group("/api/v1")
+
+	handler.NewUserHandler(
+		userService,
+		log,
+	).RegisterRoutes(apiV1)
 
 	return &http.Server{
-		Addr:         ":" + cfg.HTTPPort,
-		Handler:      router,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Addr:              ":" + cfg.HTTPPort,
+		Handler:           router,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 }
 
-// ── Graceful shutdown ─────────────────────────────────────────────────────────
+func gracefulShutdown(
+	log *zap.Logger,
+	healthServer *health.Server,
+	grpcServer *grpc.Server,
+	httpServer *http.Server,
+) {
+	log.Info("shutting down")
 
-func gracefulShutdown(log *zap.Logger, healthSrv *health.Server, grpcSrv *grpc.Server, httpSrv *http.Server) {
-	log.Info("shutting down...")
+	healthServer.SetServingStatus(
+		grpcUserServiceName,
+		grpc_health_v1.HealthCheckResponse_NOT_SERVING,
+	)
 
-	// flip health status to NOT_SERVING FIRST — this tells Istio/k8s to stop
-	// routing new traffic to this pod while existing requests below still drain
-	healthSrv.SetServingStatus("user.UserService", grpc_health_v1.HealthCheckResponse_NOT_SERVING)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		15*time.Second,
+	)
 	defer cancel()
 
-	if err := httpSrv.Shutdown(ctx); err != nil {
-		log.Error("http shutdown", zap.Error(err))
+	if err := httpServer.Shutdown(ctx); err != nil {
+		log.Error(
+			"http shutdown",
+			zap.Error(err),
+		)
 	}
 
-	grpcSrv.GracefulStop() // blocks until active RPCs finish, then stops
+	grpcStopped := make(chan struct{})
+
+	go func() {
+		grpcServer.GracefulStop()
+		close(grpcStopped)
+	}()
+
+	select {
+	case <-grpcStopped:
+		log.Info("gRPC server stopped gracefully")
+	case <-ctx.Done():
+		log.Warn(
+			"gRPC graceful shutdown timed out; forcing stop",
+		)
+		grpcServer.Stop()
+	}
 
 	log.Info("stopped cleanly")
 }
 
-// ── Tracing ───────────────────────────────────────────────────────────────────
-
-func initTracer(cfg *config.Config) (*sdktrace.TracerProvider, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func initTracer(
+	cfg *config.Config,
+) (*sdktrace.TracerProvider, error) {
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		5*time.Second,
+	)
 	defer cancel()
 
-	exp, err := otlptracegrpc.New(ctx,
+	exporter, err := otlptracegrpc.New(
+		ctx,
 		otlptracegrpc.WithEndpoint(cfg.OTLPEndpoint),
-		otlptracegrpc.WithInsecure(), // Istio sidecar mTLS already secures the transport
+		otlptracegrpc.WithInsecure(),
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf(
+			"create OTLP trace exporter: %w",
+			err,
+		)
 	}
 
-	return sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(exp),
-		sdktrace.WithResource(resource.NewWithAttributes(
-			semconv.SchemaURL,
-			semconv.ServiceName(cfg.ServiceName),
-			semconv.ServiceVersion(cfg.ServiceVersion),
-		)),
-	), nil
+	tracerProvider := sdktrace.NewTracerProvider(
+		sdktrace.WithBatcher(exporter),
+		sdktrace.WithResource(
+			resource.NewWithAttributes(
+				semconv.SchemaURL,
+				semconv.ServiceName(cfg.ServiceName),
+				semconv.ServiceVersion(cfg.ServiceVersion),
+			),
+		),
+	)
+
+	return tracerProvider, nil
 }

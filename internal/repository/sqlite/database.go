@@ -1,36 +1,89 @@
 package sqlite
 
 import (
-	"storemesh-user-service/internal/models"
+	"fmt"
 
-	"github.com/google/uuid"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+
+	"storemesh-user-service/internal/models"
 )
 
-// OpenSQLite opens an in-memory SQLite connection — used in unit tests only.
-// Tests never need a running Postgres instance.
+// OpenSQLite opens an isolated in-memory SQLite database for repository tests.
 func OpenSQLite() (*gorm.DB, error) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
-	})
+	db, err := gorm.Open(
+		sqlite.Open(":memory:"),
+		&gorm.Config{
+			TranslateError: true,
+			Logger: logger.Default.LogMode(
+				logger.Silent,
+			),
+		},
+	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf(
+			"open sqlite: %w",
+			err,
+		)
 	}
-	// run AutoMigrate so tables exist for tests
-	if err := db.AutoMigrate(&models.User{}, &models.Role{}); err != nil {
-		return nil, err
+
+	// SQLite in-memory databases are connection-local. Restricting the pool
+	// to one connection prevents tests from observing an empty database after
+	// GORM obtains a different connection from the pool.
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, fmt.Errorf(
+			"get sqlite connection pool: %w",
+			err,
+		)
 	}
-	// seed roles
-	id := uuid.New()
+
+	sqlDB.SetMaxOpenConns(1)
+
+	if err := db.AutoMigrate(
+		&models.User{},
+		&models.Role{},
+	); err != nil {
+		_ = sqlDB.Close()
+
+		return nil, fmt.Errorf(
+			"migrate sqlite: %w",
+			err,
+		)
+	}
+
 	roles := []models.Role{
-		{ID: id, Name: "customer", Description: "Standard customer"},
-		{ID: id, Name: "admin", Description: "Administrator"},
-		{ID: id, Name: "seller", Description: "Marketplace seller"},
+		{
+			Name:        "customer",
+			Description: "Standard customer",
+		},
+		{
+			Name:        "admin",
+			Description: "Administrator",
+		},
+		{
+			Name:        "seller",
+			Description: "Marketplace seller",
+		},
 	}
-	for _, r := range roles {
-		db.FirstOrCreate(&r, models.Role{Name: r.Name})
+
+	for i := range roles {
+		role := &roles[i]
+
+		if err := db.
+			Where(models.Role{Name: role.Name}).
+			FirstOrCreate(role).
+			Error; err != nil {
+			_ = sqlDB.Close()
+
+			return nil, fmt.Errorf(
+				"seed sqlite role %q: %w",
+				role.Name,
+				err,
+			)
+		}
 	}
+
 	return db, nil
 }

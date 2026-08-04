@@ -6,11 +6,23 @@ import (
 )
 
 type Role struct {
-	gorm.Model
-	ID          uuid.UUID `json:"id" gorm:"column:id;primary_key;type:uuid;default:uuid_generate_v4()"`
-	Name        string    `json:"name" gorm:"index:idx_name,unique"`
-	Description string    `json:"description"`
-	Deleted     *bool     `json:"deleted" gorm:"default=false"`
+	Model
+
+	ID uuid.UUID `json:"id" gorm:"column:id;type:uuid;primaryKey"`
+
+	Name string `json:"name" gorm:"column:name;not null;uniqueIndex:idx_roles_name"`
+
+	Description string `json:"description" gorm:"column:description"`
+
+	Deleted bool `json:"deleted" gorm:"column:deleted;not null;default:false;index"`
+}
+
+func (r *Role) BeforeCreate(_ *gorm.DB) error {
+	if r.ID == uuid.Nil {
+		r.ID = uuid.New()
+	}
+
+	return nil
 }
 
 func (Role) TableName() string {

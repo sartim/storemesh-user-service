@@ -1,15 +1,9 @@
 package env
 
-import (
-	"log"
+import "github.com/joho/godotenv"
 
-	"github.com/joho/godotenv"
-)
-
-func LoadEnvVars() {
-	err := godotenv.Load()
-	if err != nil {
-		msg := "Error loading .env file"
-		log.Panicf("%s: %s", msg, err)
-	}
+// LoadEnvVars loads development environment variables from .env.
+// The caller decides whether a missing or malformed file is fatal.
+func LoadEnvVars() error {
+	return godotenv.Load()
 }
