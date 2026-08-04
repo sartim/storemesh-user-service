@@ -22,11 +22,21 @@ func NewUserHandler(
 	}
 }
 
-func (h *UserHandler) RegisterRoutes(router *gin.RouterGroup) {
+func (h *UserHandler) RegisterRoutes(
+	router *gin.RouterGroup,
+) {
 	users := router.Group("/users")
 
-	users.GET("/:id", h.GetUser)
 	users.POST("", h.CreateUser)
+	users.GET("/:id", h.GetUser)
 	users.PUT("/:id", h.UpdateUser)
+	users.PATCH("/:id", h.UpdateUser)
 	users.DELETE("/:id", h.DeleteUser)
+
+	auth := router.Group("/auth")
+
+	auth.POST("/login", h.Authenticate)
+	auth.POST("/refresh", h.RefreshToken)
+	auth.POST("/logout", h.Logout)
+	auth.POST("/logout-all", h.LogoutAll)
 }

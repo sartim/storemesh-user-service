@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -11,15 +12,8 @@ import (
 	"storemesh-user-service/internal/domain"
 )
 
-type sessionData struct {
-	UserID    string    `json:"user_id"`
-	Email     string    `json:"email"`
-	Roles     []string  `json:"roles"`
-	ExpiresAt time.Time `json:"expires_at"`
-}
+const maximumRotationAttempts = 3
 
-// cachedUserProfile deliberately excludes PasswordHash. Cached profile data is
-// intended for read-only presentation use and must never contain credentials.
 type cachedUserProfile struct {
 	ID        string            `json:"id"`
 	Email     string            `json:"email"`
@@ -35,136 +29,361 @@ type SessionCache struct {
 	rdb *redis.Client
 }
 
-func NewSessionCache(rdb *redis.Client) *SessionCache {
-	return &SessionCache{rdb: rdb}
+func NewSessionCache(
+	rdb *redis.Client,
+) *SessionCache {
+	return &SessionCache{
+		rdb: rdb,
+	}
 }
 
-func (c *SessionCache) StoreSession(
+func (c *SessionCache) Create(
 	ctx context.Context,
-	tokenHash string,
-	claims *domain.TokenClaims,
+	session *domain.AuthSession,
 	ttl time.Duration,
 ) error {
-	data := sessionData{
-		UserID:    claims.UserID,
-		Email:     claims.Email,
-		Roles:     claims.Roles,
-		ExpiresAt: time.Now().Add(ttl),
-	}
-
-	payload, err := json.Marshal(data)
-	if err != nil {
-		return fmt.Errorf("marshal session: %w", err)
-	}
-
-	if err := c.rdb.Set(
-		ctx,
-		sessionKey(tokenHash),
-		payload,
+	if err := validateSession(
+		session,
 		ttl,
-	).Err(); err != nil {
-		return fmt.Errorf("store session: %w", err)
+	); err != nil {
+		return err
+	}
+
+	payload, err := json.Marshal(session)
+	if err != nil {
+		return fmt.Errorf(
+			"marshal auth session: %w",
+			err,
+		)
+	}
+
+	_, err = c.rdb.TxPipelined(
+		ctx,
+		func(
+			pipeline redis.Pipeliner,
+		) error {
+			pipeline.Set(
+				ctx,
+				authSessionKey(session.ID),
+				payload,
+				ttl,
+			)
+
+			pipeline.SAdd(
+				ctx,
+				userSessionsKey(session.UserID),
+				session.ID,
+			)
+
+			pipeline.Expire(
+				ctx,
+				userSessionsKey(session.UserID),
+				ttl,
+			)
+
+			return nil
+		},
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"create auth session: %w",
+			err,
+		)
 	}
 
 	return nil
 }
 
-func (c *SessionCache) GetSession(
+func (c *SessionCache) Get(
 	ctx context.Context,
-	tokenHash string,
-) (*domain.TokenClaims, error) {
-	payload, err := c.rdb.Get(
-		ctx,
-		sessionKey(tokenHash),
-	).Bytes()
-	if err != nil {
-		if err == redis.Nil {
-			return nil, domain.ErrNotFound
-		}
-
-		return nil, fmt.Errorf("get session: %w", err)
-	}
-
-	var data sessionData
-	if err := json.Unmarshal(payload, &data); err != nil {
-		return nil, fmt.Errorf("unmarshal session: %w", err)
-	}
-
-	if time.Now().After(data.ExpiresAt) {
-		_ = c.rdb.Del(ctx, sessionKey(tokenHash)).Err()
+	sessionID string,
+) (*domain.AuthSession, error) {
+	if sessionID == "" {
 		return nil, domain.ErrInvalidToken
 	}
 
-	return &domain.TokenClaims{
-		UserID: data.UserID,
-		Email:  data.Email,
-		Roles:  data.Roles,
-	}, nil
-}
-
-func (c *SessionCache) RevokeSession(
-	ctx context.Context,
-	tokenHash string,
-) error {
-	if err := c.rdb.Del(
+	payload, err := c.rdb.Get(
 		ctx,
-		sessionKey(tokenHash),
-	).Err(); err != nil {
-		return fmt.Errorf("revoke session: %w", err)
-	}
-
-	return nil
-}
-
-func (c *SessionCache) RevokeAllUserSessions(
-	ctx context.Context,
-	userID string,
-) error {
-	keys, err := c.rdb.SMembers(
-		ctx,
-		userSessionsKey(userID),
-	).Result()
+		authSessionKey(sessionID),
+	).Bytes()
 	if err != nil {
-		return fmt.Errorf("list user sessions: %w", err)
+		if errors.Is(err, redis.Nil) {
+			return nil, domain.ErrNotFound
+		}
+
+		return nil, fmt.Errorf(
+			"get auth session: %w",
+			err,
+		)
 	}
 
-	if len(keys) == 0 {
+	session, err := unmarshalSession(payload)
+	if err != nil {
+		return nil, err
+	}
+
+	if time.Now().UTC().After(
+		session.ExpiresAt,
+	) {
+		_ = c.Delete(
+			ctx,
+			session.ID,
+		)
+
+		return nil, domain.ErrInvalidToken
+	}
+
+	return session, nil
+}
+
+func (c *SessionCache) Rotate(
+	ctx context.Context,
+	sessionID string,
+	currentRefreshTokenID string,
+	next *domain.AuthSession,
+	ttl time.Duration,
+) error {
+	if sessionID == "" ||
+		currentRefreshTokenID == "" {
+		return domain.ErrInvalidToken
+	}
+
+	if err := validateSession(
+		next,
+		ttl,
+	); err != nil {
+		return err
+	}
+
+	if next.ID != sessionID {
+		return fmt.Errorf(
+			"%w: session id cannot change during rotation",
+			domain.ErrInvalidInput,
+		)
+	}
+
+	nextPayload, err := json.Marshal(next)
+	if err != nil {
+		return fmt.Errorf(
+			"marshal rotated auth session: %w",
+			err,
+		)
+	}
+
+	key := authSessionKey(sessionID)
+
+	var lastTransactionError error
+
+	for attempt := 0; attempt < maximumRotationAttempts; attempt++ {
+		err := c.rdb.Watch(
+			ctx,
+			func(
+				transaction *redis.Tx,
+			) error {
+				currentPayload, err := transaction.Get(
+					ctx,
+					key,
+				).Bytes()
+				if err != nil {
+					if errors.Is(
+						err,
+						redis.Nil,
+					) {
+						return domain.ErrInvalidToken
+					}
+
+					return err
+				}
+
+				current, err := unmarshalSession(
+					currentPayload,
+				)
+				if err != nil {
+					return err
+				}
+
+				if current.RefreshTokenID != currentRefreshTokenID {
+					return domain.ErrInvalidToken
+				}
+
+				if current.UserID != next.UserID {
+					return domain.ErrInvalidToken
+				}
+
+				_, err = transaction.TxPipelined(
+					ctx,
+					func(
+						pipeline redis.Pipeliner,
+					) error {
+						pipeline.Set(
+							ctx,
+							key,
+							nextPayload,
+							ttl,
+						)
+
+						pipeline.SAdd(
+							ctx,
+							userSessionsKey(next.UserID),
+							next.ID,
+						)
+
+						pipeline.Expire(
+							ctx,
+							userSessionsKey(next.UserID),
+							ttl,
+						)
+
+						return nil
+					},
+				)
+
+				return err
+			},
+			key,
+		)
+
+		if err == nil {
+			return nil
+		}
+
+		if errors.Is(
+			err,
+			domain.ErrInvalidToken,
+		) {
+			return domain.ErrInvalidToken
+		}
+
+		if errors.Is(
+			err,
+			redis.TxFailedErr,
+		) {
+			lastTransactionError = err
+			continue
+		}
+
+		return fmt.Errorf(
+			"rotate auth session: %w",
+			err,
+		)
+	}
+
+	return fmt.Errorf(
+		"rotate auth session after %d attempts: %w",
+		maximumRotationAttempts,
+		lastTransactionError,
+	)
+}
+
+func (c *SessionCache) Delete(
+	ctx context.Context,
+	sessionID string,
+) error {
+	if sessionID == "" {
 		return nil
 	}
 
-	pipeline := c.rdb.Pipeline()
-	for _, key := range keys {
-		pipeline.Del(ctx, key)
-	}
-	pipeline.Del(ctx, userSessionsKey(userID))
+	key := authSessionKey(sessionID)
 
-	if _, err := pipeline.Exec(ctx); err != nil {
-		return fmt.Errorf("revoke user sessions: %w", err)
+	payload, err := c.rdb.Get(
+		ctx,
+		key,
+	).Bytes()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return nil
+		}
+
+		return fmt.Errorf(
+			"get session before deletion: %w",
+			err,
+		)
+	}
+
+	session, err := unmarshalSession(payload)
+	if err != nil {
+		return err
+	}
+
+	_, err = c.rdb.TxPipelined(
+		ctx,
+		func(
+			pipeline redis.Pipeliner,
+		) error {
+			pipeline.Del(
+				ctx,
+				key,
+			)
+
+			pipeline.SRem(
+				ctx,
+				userSessionsKey(session.UserID),
+				session.ID,
+			)
+
+			return nil
+		},
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"delete auth session: %w",
+			err,
+		)
 	}
 
 	return nil
 }
 
-func (c *SessionCache) TrackUserSession(
+func (c *SessionCache) DeleteAllForUser(
 	ctx context.Context,
 	userID string,
-	tokenHash string,
-	ttl time.Duration,
 ) error {
-	pipeline := c.rdb.Pipeline()
-	pipeline.SAdd(
+	if userID == "" {
+		return fmt.Errorf(
+			"%w: user id is required",
+			domain.ErrInvalidInput,
+		)
+	}
+
+	setKey := userSessionsKey(userID)
+
+	sessionIDs, err := c.rdb.SMembers(
 		ctx,
-		userSessionsKey(userID),
-		sessionKey(tokenHash),
-	)
-	pipeline.Expire(
-		ctx,
-		userSessionsKey(userID),
-		ttl,
+		setKey,
+	).Result()
+	if err != nil {
+		return fmt.Errorf(
+			"list user auth sessions: %w",
+			err,
+		)
+	}
+
+	keys := make(
+		[]string,
+		0,
+		len(sessionIDs)+1,
 	)
 
-	if _, err := pipeline.Exec(ctx); err != nil {
-		return fmt.Errorf("track user session: %w", err)
+	for _, sessionID := range sessionIDs {
+		keys = append(
+			keys,
+			authSessionKey(sessionID),
+		)
+	}
+
+	keys = append(
+		keys,
+		setKey,
+	)
+
+	if err := c.rdb.Del(
+		ctx,
+		keys...,
+	).Err(); err != nil {
+		return fmt.Errorf(
+			"delete user auth sessions: %w",
+			err,
+		)
 	}
 
 	return nil
@@ -195,7 +414,10 @@ func (c *SessionCache) CacheUserProfile(
 
 	payload, err := json.Marshal(profile)
 	if err != nil {
-		return fmt.Errorf("marshal user profile: %w", err)
+		return fmt.Errorf(
+			"marshal user profile: %w",
+			err,
+		)
 	}
 
 	if err := c.rdb.Set(
@@ -204,7 +426,10 @@ func (c *SessionCache) CacheUserProfile(
 		payload,
 		ttl,
 	).Err(); err != nil {
-		return fmt.Errorf("cache user profile: %w", err)
+		return fmt.Errorf(
+			"cache user profile: %w",
+			err,
+		)
 	}
 
 	return nil
@@ -219,7 +444,7 @@ func (c *SessionCache) GetCachedUserProfile(
 		profileKey(userID),
 	).Bytes()
 	if err != nil {
-		if err == redis.Nil {
+		if errors.Is(err, redis.Nil) {
 			return nil, domain.ErrNotFound
 		}
 
@@ -230,7 +455,11 @@ func (c *SessionCache) GetCachedUserProfile(
 	}
 
 	var profile cachedUserProfile
-	if err := json.Unmarshal(payload, &profile); err != nil {
+
+	if err := json.Unmarshal(
+		payload,
+		&profile,
+	); err != nil {
 		return nil, fmt.Errorf(
 			"unmarshal user profile: %w",
 			err,
@@ -266,25 +495,18 @@ func (c *SessionCache) InvalidateUserProfile(
 	return nil
 }
 
-func sessionKey(tokenHash string) string {
-	return "session:" + tokenHash
-}
-
-func userSessionsKey(userID string) string {
-	return "user:sessions:" + userID
-}
-
-func profileKey(userID string) string {
-	return "user:profile:" + userID
-}
-
-func NewRedisClient(redisURL string) (*redis.Client, error) {
-	opts, err := redis.ParseURL(redisURL)
+func NewRedisClient(
+	redisURL string,
+) (*redis.Client, error) {
+	options, err := redis.ParseURL(redisURL)
 	if err != nil {
-		return nil, fmt.Errorf("parse redis url: %w", err)
+		return nil, fmt.Errorf(
+			"parse redis url: %w",
+			err,
+		)
 	}
 
-	client := redis.NewClient(opts)
+	client := redis.NewClient(options)
 
 	ctx, cancel := context.WithTimeout(
 		context.Background(),
@@ -294,8 +516,99 @@ func NewRedisClient(redisURL string) (*redis.Client, error) {
 
 	if err := client.Ping(ctx).Err(); err != nil {
 		_ = client.Close()
-		return nil, fmt.Errorf("ping redis: %w", err)
+
+		return nil, fmt.Errorf(
+			"ping redis: %w",
+			err,
+		)
 	}
 
 	return client, nil
 }
+
+func validateSession(
+	session *domain.AuthSession,
+	ttl time.Duration,
+) error {
+	if session == nil {
+		return fmt.Errorf(
+			"%w: auth session is required",
+			domain.ErrInvalidInput,
+		)
+	}
+
+	if session.ID == "" {
+		return fmt.Errorf(
+			"%w: auth session id is required",
+			domain.ErrInvalidInput,
+		)
+	}
+
+	if session.UserID == "" {
+		return fmt.Errorf(
+			"%w: auth session user id is required",
+			domain.ErrInvalidInput,
+		)
+	}
+
+	if session.AccessTokenID == "" {
+		return fmt.Errorf(
+			"%w: access token id is required",
+			domain.ErrInvalidInput,
+		)
+	}
+
+	if session.RefreshTokenID == "" {
+		return fmt.Errorf(
+			"%w: refresh token id is required",
+			domain.ErrInvalidInput,
+		)
+	}
+
+	if ttl <= 0 {
+		return fmt.Errorf(
+			"%w: session ttl must be positive",
+			domain.ErrInvalidInput,
+		)
+	}
+
+	return nil
+}
+
+func unmarshalSession(
+	payload []byte,
+) (*domain.AuthSession, error) {
+	var session domain.AuthSession
+
+	if err := json.Unmarshal(
+		payload,
+		&session,
+	); err != nil {
+		return nil, fmt.Errorf(
+			"unmarshal auth session: %w",
+			err,
+		)
+	}
+
+	return &session, nil
+}
+
+func authSessionKey(
+	sessionID string,
+) string {
+	return "auth:session:" + sessionID
+}
+
+func userSessionsKey(
+	userID string,
+) string {
+	return "auth:user-sessions:" + userID
+}
+
+func profileKey(
+	userID string,
+) string {
+	return "user:profile:" + userID
+}
+
+var _ domain.AuthSessionStore = (*SessionCache)(nil)

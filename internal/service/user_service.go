@@ -2,36 +2,64 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
 
 	"storemesh-user-service/internal/domain"
 )
 
+const (
+	minimumPasswordLength = 8
+	tokenValidationLeeway = 30 * time.Second
+)
+
+type jwtClaims struct {
+	Email     string           `json:"email"`
+	Roles     []string         `json:"roles,omitempty"`
+	TokenType domain.TokenType `json:"token_type"`
+	SessionID string           `json:"sid"`
+
+	jwt.RegisteredClaims
+}
+
 type userService struct {
-	users      domain.UserRepository
-	log        *zap.Logger
-	secret     []byte
+	users    domain.UserRepository
+	sessions domain.AuthSessionStore
+	log      *zap.Logger
+
+	secret   []byte
+	issuer   string
+	audience string
+
 	accessTTL  time.Duration
 	refreshTTL time.Duration
 }
 
 func NewUserService(
 	users domain.UserRepository,
+	sessions domain.AuthSessionStore,
 	log *zap.Logger,
 	secret string,
+	issuer string,
+	audience string,
 	accessTTL time.Duration,
 	refreshTTL time.Duration,
 ) domain.UserService {
 	return &userService{
 		users:      users,
+		sessions:   sessions,
 		log:        log,
 		secret:     []byte(secret),
+		issuer:     issuer,
+		audience:   audience,
 		accessTTL:  accessTTL,
 		refreshTTL: refreshTTL,
 	}
@@ -41,10 +69,20 @@ func (s *userService) CreateUser(
 	ctx context.Context,
 	req domain.CreateUserRequest,
 ) (*domain.User, error) {
-	if req.Email == "" || req.Password == "" {
+	req.Email = normalizeEmail(req.Email)
+
+	if req.Email == "" {
 		return nil, fmt.Errorf(
-			"%w: email and password are required",
+			"%w: email is required",
 			domain.ErrInvalidInput,
+		)
+	}
+
+	if len(req.Password) < minimumPasswordLength {
+		return nil, fmt.Errorf(
+			"%w: password must contain at least %d characters",
+			domain.ErrInvalidInput,
+			minimumPasswordLength,
 		)
 	}
 
@@ -53,19 +91,25 @@ func (s *userService) CreateUser(
 		bcrypt.DefaultCost,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("hash password: %w", err)
+		return nil, fmt.Errorf(
+			"hash password: %w",
+			err,
+		)
 	}
 
 	user := &domain.User{
 		Email:        req.Email,
 		PasswordHash: string(hash),
-		FirstName:    req.FirstName,
-		LastName:     req.LastName,
-		Phone:        req.Phone,
+		FirstName:    strings.TrimSpace(req.FirstName),
+		LastName:     strings.TrimSpace(req.LastName),
+		Phone:        strings.TrimSpace(req.Phone),
 		Status:       domain.StatusActive,
 	}
 
-	if err := s.users.Create(ctx, user); err != nil {
+	if err := s.users.Create(
+		ctx,
+		user,
+	); err != nil {
 		return nil, err
 	}
 
@@ -82,6 +126,8 @@ func (s *userService) GetUser(
 	ctx context.Context,
 	id string,
 ) (*domain.User, error) {
+	id = strings.TrimSpace(id)
+
 	if id == "" {
 		return nil, fmt.Errorf(
 			"%w: id is required",
@@ -89,13 +135,18 @@ func (s *userService) GetUser(
 		)
 	}
 
-	return s.users.GetByID(ctx, id)
+	return s.users.GetByID(
+		ctx,
+		id,
+	)
 }
 
 func (s *userService) GetUserByEmail(
 	ctx context.Context,
 	email string,
 ) (*domain.User, error) {
+	email = normalizeEmail(email)
+
 	if email == "" {
 		return nil, fmt.Errorf(
 			"%w: email is required",
@@ -103,13 +154,18 @@ func (s *userService) GetUserByEmail(
 		)
 	}
 
-	return s.users.GetByEmail(ctx, email)
+	return s.users.GetByEmail(
+		ctx,
+		email,
+	)
 }
 
 func (s *userService) UpdateUser(
 	ctx context.Context,
 	req domain.UpdateUserRequest,
 ) (*domain.User, error) {
+	req.ID = strings.TrimSpace(req.ID)
+
 	if req.ID == "" {
 		return nil, fmt.Errorf(
 			"%w: id is required",
@@ -117,24 +173,36 @@ func (s *userService) UpdateUser(
 		)
 	}
 
-	user, err := s.users.GetByID(ctx, req.ID)
+	user, err := s.users.GetByID(
+		ctx,
+		req.ID,
+	)
 	if err != nil {
 		return nil, err
 	}
 
-	if req.FirstName != "" {
-		user.FirstName = req.FirstName
+	if value := strings.TrimSpace(
+		req.FirstName,
+	); value != "" {
+		user.FirstName = value
 	}
 
-	if req.LastName != "" {
-		user.LastName = req.LastName
+	if value := strings.TrimSpace(
+		req.LastName,
+	); value != "" {
+		user.LastName = value
 	}
 
-	if req.Phone != "" {
-		user.Phone = req.Phone
+	if value := strings.TrimSpace(
+		req.Phone,
+	); value != "" {
+		user.Phone = value
 	}
 
-	if err := s.users.Update(ctx, user); err != nil {
+	if err := s.users.Update(
+		ctx,
+		user,
+	); err != nil {
 		return nil, err
 	}
 
@@ -145,6 +213,8 @@ func (s *userService) DeleteUser(
 	ctx context.Context,
 	id string,
 ) error {
+	id = strings.TrimSpace(id)
+
 	if id == "" {
 		return fmt.Errorf(
 			"%w: id is required",
@@ -152,7 +222,20 @@ func (s *userService) DeleteUser(
 		)
 	}
 
-	return s.users.Delete(ctx, id)
+	if err := s.sessions.DeleteAllForUser(
+		ctx,
+		id,
+	); err != nil {
+		return fmt.Errorf(
+			"revoke user sessions: %w",
+			err,
+		)
+	}
+
+	return s.users.Delete(
+		ctx,
+		id,
+	)
 }
 
 func (s *userService) ListUsers(
@@ -163,11 +246,15 @@ func (s *userService) ListUsers(
 		req.Page = 1
 	}
 
-	if req.PerPage <= 0 || req.PerPage > 100 {
+	if req.PerPage <= 0 ||
+		req.PerPage > 100 {
 		req.PerPage = 20
 	}
 
-	users, total, err := s.users.List(ctx, req)
+	users, total, err := s.users.List(
+		ctx,
+		req,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -190,7 +277,17 @@ func (s *userService) Authenticate(
 	ctx context.Context,
 	req domain.AuthRequest,
 ) (*domain.User, *domain.TokenPair, error) {
-	user, err := s.users.GetByEmail(ctx, req.Email)
+	req.Email = normalizeEmail(req.Email)
+
+	if req.Email == "" ||
+		req.Password == "" {
+		return nil, nil, domain.ErrInvalidPassword
+	}
+
+	user, err := s.users.GetByEmail(
+		ctx,
+		req.Email,
+	)
 	if err != nil {
 		return nil, nil, domain.ErrInvalidPassword
 	}
@@ -202,10 +299,32 @@ func (s *userService) Authenticate(
 		return nil, nil, domain.ErrInvalidPassword
 	}
 
-	pair, err := s.issueTokenPair(user)
+	if !user.IsActive() {
+		return nil, nil, domain.ErrForbidden
+	}
+
+	sessionID := uuid.NewString()
+	createdAt := time.Now().UTC()
+
+	pair, session, err := s.issueTokenPair(
+		user,
+		sessionID,
+		createdAt,
+	)
 	if err != nil {
 		return nil, nil, fmt.Errorf(
-			"issue tokens: %w",
+			"issue token pair: %w",
+			err,
+		)
+	}
+
+	if err := s.sessions.Create(
+		ctx,
+		session,
+		s.refreshTTL,
+	); err != nil {
+		return nil, nil, fmt.Errorf(
+			"create authentication session: %w",
 			err,
 		)
 	}
@@ -213,110 +332,380 @@ func (s *userService) Authenticate(
 	s.log.Info(
 		"user authenticated",
 		zap.String("user_id", user.ID),
+		zap.String("session_id", session.ID),
 	)
 
 	return user, pair, nil
 }
 
 func (s *userService) ValidateToken(
-	_ context.Context,
+	ctx context.Context,
 	tokenString string,
 ) (*domain.TokenClaims, error) {
-	token, err := jwt.Parse(
+	claims, _, err := s.validateToken(
+		ctx,
 		tokenString,
-		func(token *jwt.Token) (any, error) {
-			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, fmt.Errorf(
-					"unexpected signing method: %v",
-					token.Header["alg"],
-				)
-			}
-
-			return s.secret, nil
-		},
+		"",
 	)
-	if err != nil || !token.Valid {
-		return nil, domain.ErrInvalidToken
+	if err != nil {
+		return nil, err
 	}
 
-	claims, ok := token.Claims.(jwt.MapClaims)
-	if !ok {
-		return nil, domain.ErrInvalidToken
-	}
-
-	userID, _ := claims["sub"].(string)
-	email, _ := claims["email"].(string)
-
-	rawRoles, _ := claims["roles"].([]any)
-	roles := make([]string, 0, len(rawRoles))
-
-	for _, rawRole := range rawRoles {
-		role, ok := rawRole.(string)
-		if ok {
-			roles = append(roles, role)
-		}
-	}
-
-	return &domain.TokenClaims{
-		UserID: userID,
-		Email:  email,
-		Roles:  roles,
-	}, nil
+	return claims, nil
 }
 
 func (s *userService) RefreshToken(
 	ctx context.Context,
 	refreshToken string,
 ) (*domain.TokenPair, error) {
-	claims, err := s.ValidateToken(ctx, refreshToken)
+	claims, currentSession, err := s.validateToken(
+		ctx,
+		refreshToken,
+		domain.TokenTypeRefresh,
+	)
 	if err != nil {
 		return nil, domain.ErrInvalidToken
 	}
 
-	user, err := s.users.GetByID(ctx, claims.UserID)
+	user, err := s.users.GetByID(
+		ctx,
+		claims.UserID,
+	)
 	if err != nil {
-		return nil, err
+		return nil, domain.ErrInvalidToken
 	}
 
-	return s.issueTokenPair(user)
+	if !user.IsActive() {
+		return nil, domain.ErrForbidden
+	}
+
+	nextPair, nextSession, err := s.issueTokenPair(
+		user,
+		currentSession.ID,
+		currentSession.CreatedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"issue rotated token pair: %w",
+			err,
+		)
+	}
+
+	err = s.sessions.Rotate(
+		ctx,
+		currentSession.ID,
+		claims.TokenID,
+		nextSession,
+		s.refreshTTL,
+	)
+	if err != nil {
+		if errors.Is(
+			err,
+			domain.ErrInvalidToken,
+		) ||
+			errors.Is(
+				err,
+				domain.ErrNotFound,
+			) {
+			return nil, domain.ErrInvalidToken
+		}
+
+		return nil, fmt.Errorf(
+			"rotate authentication session: %w",
+			err,
+		)
+	}
+
+	s.log.Info(
+		"authentication session rotated",
+		zap.String("user_id", user.ID),
+		zap.String(
+			"session_id",
+			currentSession.ID,
+		),
+	)
+
+	return nextPair, nil
+}
+
+func (s *userService) Logout(
+	ctx context.Context,
+	accessToken string,
+) error {
+	claims, _, err := s.validateToken(
+		ctx,
+		accessToken,
+		domain.TokenTypeAccess,
+	)
+	if err != nil {
+		return domain.ErrInvalidToken
+	}
+
+	if err := s.sessions.Delete(
+		ctx,
+		claims.SessionID,
+	); err != nil {
+		return fmt.Errorf(
+			"delete authentication session: %w",
+			err,
+		)
+	}
+
+	s.log.Info(
+		"user logged out",
+		zap.String("user_id", claims.UserID),
+		zap.String("session_id", claims.SessionID),
+	)
+
+	return nil
+}
+
+func (s *userService) LogoutAll(
+	ctx context.Context,
+	accessToken string,
+) error {
+	claims, _, err := s.validateToken(
+		ctx,
+		accessToken,
+		domain.TokenTypeAccess,
+	)
+	if err != nil {
+		return domain.ErrInvalidToken
+	}
+
+	if err := s.sessions.DeleteAllForUser(
+		ctx,
+		claims.UserID,
+	); err != nil {
+		return fmt.Errorf(
+			"delete all authentication sessions: %w",
+			err,
+		)
+	}
+
+	s.log.Info(
+		"user logged out from all sessions",
+		zap.String("user_id", claims.UserID),
+	)
+
+	return nil
+}
+
+func (s *userService) validateToken(
+	ctx context.Context,
+	tokenString string,
+	expectedType domain.TokenType,
+) (*domain.TokenClaims, *domain.AuthSession, error) {
+	parsedClaims, err := s.parseToken(
+		tokenString,
+	)
+	if err != nil {
+		return nil, nil, domain.ErrInvalidToken
+	}
+
+	if expectedType != "" &&
+		parsedClaims.TokenType != expectedType {
+		return nil, nil, domain.ErrInvalidToken
+	}
+
+	session, err := s.sessions.Get(
+		ctx,
+		parsedClaims.SessionID,
+	)
+	if err != nil {
+		return nil, nil, domain.ErrInvalidToken
+	}
+
+	if session.UserID != parsedClaims.Subject {
+		return nil, nil, domain.ErrInvalidToken
+	}
+
+	if session.Email != parsedClaims.Email {
+		return nil, nil, domain.ErrInvalidToken
+	}
+
+	switch parsedClaims.TokenType {
+	case domain.TokenTypeAccess:
+		if session.AccessTokenID != parsedClaims.ID {
+			return nil, nil, domain.ErrInvalidToken
+		}
+
+	case domain.TokenTypeRefresh:
+		if session.RefreshTokenID != parsedClaims.ID {
+			return nil, nil, domain.ErrInvalidToken
+		}
+
+	default:
+		return nil, nil, domain.ErrInvalidToken
+	}
+
+	if parsedClaims.ExpiresAt == nil {
+		return nil, nil, domain.ErrInvalidToken
+	}
+
+	return &domain.TokenClaims{
+		UserID:    parsedClaims.Subject,
+		Email:     parsedClaims.Email,
+		Roles:     append([]string(nil), parsedClaims.Roles...),
+		TokenType: parsedClaims.TokenType,
+		TokenID:   parsedClaims.ID,
+		SessionID: parsedClaims.SessionID,
+		ExpiresAt: parsedClaims.ExpiresAt.Time,
+	}, session, nil
+}
+
+func (s *userService) parseToken(
+	tokenString string,
+) (*jwtClaims, error) {
+	tokenString = strings.TrimSpace(
+		tokenString,
+	)
+
+	if tokenString == "" {
+		return nil, domain.ErrInvalidToken
+	}
+
+	claims := &jwtClaims{}
+
+	token, err := jwt.ParseWithClaims(
+		tokenString,
+		claims,
+		func(
+			token *jwt.Token,
+		) (any, error) {
+			if token.Method.Alg() !=
+				jwt.SigningMethodHS256.Alg() {
+				return nil, domain.ErrInvalidToken
+			}
+
+			return s.secret, nil
+		},
+		jwt.WithValidMethods(
+			[]string{
+				jwt.SigningMethodHS256.Alg(),
+			},
+		),
+		jwt.WithIssuer(s.issuer),
+		jwt.WithAudience(s.audience),
+		jwt.WithExpirationRequired(),
+		jwt.WithIssuedAt(),
+		jwt.WithLeeway(
+			tokenValidationLeeway,
+		),
+	)
+	if err != nil ||
+		token == nil ||
+		!token.Valid {
+		return nil, domain.ErrInvalidToken
+	}
+
+	if claims.Subject == "" ||
+		claims.ID == "" ||
+		claims.Email == "" ||
+		claims.SessionID == "" {
+		return nil, domain.ErrInvalidToken
+	}
+
+	switch claims.TokenType {
+	case domain.TokenTypeAccess,
+		domain.TokenTypeRefresh:
+	default:
+		return nil, domain.ErrInvalidToken
+	}
+
+	return claims, nil
 }
 
 func (s *userService) issueTokenPair(
 	user *domain.User,
-) (*domain.TokenPair, error) {
-	accessToken, err := s.signJWT(
-		user,
+	sessionID string,
+	sessionCreatedAt time.Time,
+) (*domain.TokenPair, *domain.AuthSession, error) {
+	now := time.Now().UTC()
+
+	accessTokenID := uuid.NewString()
+	refreshTokenID := uuid.NewString()
+
+	accessExpiresAt := now.Add(
 		s.accessTTL,
 	)
+
+	refreshExpiresAt := now.Add(
+		s.refreshTTL,
+	)
+
+	// Roles are intentionally empty until persisted user-role associations are
+	// introduced in the RBAC milestone.
+	roles := []string{}
+
+	accessToken, err := s.signJWT(
+		user,
+		roles,
+		domain.TokenTypeAccess,
+		sessionID,
+		accessTokenID,
+		now,
+		accessExpiresAt,
+	)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	refreshToken, err := s.signJWT(
 		user,
-		s.refreshTTL,
+		roles,
+		domain.TokenTypeRefresh,
+		sessionID,
+		refreshTokenID,
+		now,
+		refreshExpiresAt,
 	)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+
+	if sessionCreatedAt.IsZero() {
+		sessionCreatedAt = now
 	}
 
 	return &domain.TokenPair{
-		AccessToken:  accessToken,
-		RefreshToken: refreshToken,
-	}, nil
+			AccessToken:  accessToken,
+			RefreshToken: refreshToken,
+		}, &domain.AuthSession{
+			ID:             sessionID,
+			UserID:         user.ID,
+			Email:          user.Email,
+			Roles:          roles,
+			AccessTokenID:  accessTokenID,
+			RefreshTokenID: refreshTokenID,
+			CreatedAt:      sessionCreatedAt,
+			ExpiresAt:      refreshExpiresAt,
+		}, nil
 }
 
 func (s *userService) signJWT(
 	user *domain.User,
-	ttl time.Duration,
+	roles []string,
+	tokenType domain.TokenType,
+	sessionID string,
+	tokenID string,
+	issuedAt time.Time,
+	expiresAt time.Time,
 ) (string, error) {
-	now := time.Now().UTC()
+	claims := jwtClaims{
+		Email:     user.Email,
+		Roles:     append([]string(nil), roles...),
+		TokenType: tokenType,
+		SessionID: sessionID,
 
-	claims := jwt.MapClaims{
-		"sub":   user.ID,
-		"email": user.Email,
-		"iat":   now.Unix(),
-		"exp":   now.Add(ttl).Unix(),
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    s.issuer,
+			Subject:   user.ID,
+			Audience:  jwt.ClaimStrings{s.audience},
+			ExpiresAt: jwt.NewNumericDate(expiresAt),
+			IssuedAt:  jwt.NewNumericDate(issuedAt),
+			ID:        tokenID,
+		},
 	}
 
 	token := jwt.NewWithClaims(
@@ -324,7 +713,26 @@ func (s *userService) signJWT(
 		claims,
 	)
 
-	return token.SignedString(s.secret)
+	signedToken, err := token.SignedString(
+		s.secret,
+	)
+	if err != nil {
+		return "", fmt.Errorf(
+			"sign %s token: %w",
+			tokenType,
+			err,
+		)
+	}
+
+	return signedToken, nil
+}
+
+func normalizeEmail(
+	email string,
+) string {
+	return strings.ToLower(
+		strings.TrimSpace(email),
+	)
 }
 
 var _ domain.UserService = (*userService)(nil)
