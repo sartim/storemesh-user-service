@@ -1,37 +1,37 @@
-FROM ubuntu:22.04
+# syntax=docker/dockerfile:1.7
 
-ARG DB_URL
-ARG TIMEZONE
+ARG GO_VERSION=1.26.5
 
-# ENV
-ENV DB_URL=$DB_URL
-ENV TZ=$TIMEZONE
+FROM golang:${GO_VERSION}-alpine AS builder
 
-# Set the timezone
-RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+WORKDIR /src
 
-# Update and install necessary packages
-RUN apt update
-RUN apt install -y redis-server wget
-RUN apt install -y postgresql postgresql-contrib
-RUN apt-get install -y  bison mercurial
-RUN wget https://go.dev/dl/go1.19.10.linux-amd64.tar.gz
-RUN tar -C . -xzf go1.19.10.linux-amd64.tar.gz
+COPY go.mod go.sum ./
 
-# Copy the application code
+RUN go mod download
+
+COPY . .
+
+RUN CGO_ENABLED=0 \
+    GOOS=linux \
+    GOARCH=amd64 \
+    go build \
+    -trimpath \
+    -ldflags="-s -w" \
+    -o /out/storemesh-user-service \
+    ./cmd/server
+
+FROM gcr.io/distroless/static-debian12:nonroot
+
 WORKDIR /app
-COPY . /app
 
-RUN export GOROOT=$HOME/go
-RUN export PATH=$PATH:$GOROOT/bin
-RUN /go/bin/go mod init gin-shop-api
-RUN /go/bin/go mod tidy
+COPY --from=builder \
+    /out/storemesh-user-service \
+    /app/storemesh-user-service
 
-# Build the app to binary
-RUN mkdir build && /go/bin/go build -o ./build/user-service ./cmd/main.go   
+EXPOSE 50051
+EXPOSE 8080
 
-# Expose port 8000 for the app
-EXPOSE 8000
+USER nonroot:nonroot
 
-# Start the app
-CMD ["/app/build/user-service", "--action=run-server"]
+ENTRYPOINT ["/app/storemesh-user-service"]

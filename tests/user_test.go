@@ -2,92 +2,111 @@ package tests
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"storemesh-user-service/internal/domain"
+	"storemesh-user-service/internal/models"
 	"storemesh-user-service/internal/repository"
+	"storemesh-user-service/internal/repository/sqlite"
 )
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-func setupUserRepo(t *testing.T) domain.UserRepository {
+func setupUserRepo(
+	t *testing.T,
+) domain.UserRepository {
 	t.Helper()
-	db, err := repository.OpenSQLite()
+
+	db, err := sqlite.OpenSQLite()
 	require.NoError(t, err)
+
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+
+	t.Cleanup(
+		func() {
+			_ = sqlDB.Close()
+		},
+	)
+
 	return repository.NewUserRepository(db)
 }
 
-func setupAddressRepo(t *testing.T) (domain.UserRepository, domain.AddressRepository) {
-	t.Helper()
-	db, err := repository.OpenSQLite()
-	require.NoError(t, err)
-	return repository.NewUserRepository(db), repository.NewAddressRepository(db)
-}
-
-func newTestUser() *domain.User {
-	return &domain.User{
-		Email:        "test@example.com",
-		PasswordHash: "$2a$10$hashedpassword",
-		FirstName:    "John",
-		LastName:     "Doe",
-		Phone:        "+254700000000",
-		Status:       domain.StatusActive,
+func newTestUser(
+	email string,
+) *models.User {
+	return &models.User{
+		Email:     email,
+		Password:  "$2a$10$hashedpassword",
+		FirstName: "John",
+		LastName:  "Doe",
+		IsActive:  true,
 	}
 }
 
-// ── Create ────────────────────────────────────────────────────────────────────
-
-func TestUserRepo_Create_Success(t *testing.T) {
+func TestUserRepo_Create_Success(
+	t *testing.T,
+) {
 	repo := setupUserRepo(t)
 	ctx := context.Background()
 
-	user := newTestUser()
+	user := newTestUser("test@example.com")
+
 	err := repo.Create(ctx, user)
 
 	require.NoError(t, err)
-	assert.NotEmpty(t, user.ID, "ID should be assigned by repository")
-	assert.NotZero(t, user.CreatedAt, "CreatedAt should be set")
-	assert.NotZero(t, user.UpdatedAt, "UpdatedAt should be set")
+	assert.NotEqual(t, uuid.Nil, user.ID)
+	assert.False(t, user.CreatedAt.IsZero())
+	assert.False(t, user.UpdatedAt.IsZero())
 }
 
-func TestUserRepo_Create_DefaultsStatusToActive(t *testing.T) {
+func TestUserRepo_Create_DuplicateEmail_ReturnsAlreadyExists(
+	t *testing.T,
+) {
 	repo := setupUserRepo(t)
 	ctx := context.Background()
 
-	user := newTestUser()
-	user.Status = "" // no status provided
-	err := repo.Create(ctx, user)
+	require.NoError(
+		t,
+		repo.Create(
+			ctx,
+			newTestUser("duplicate@example.com"),
+		),
+	)
 
-	require.NoError(t, err)
-	assert.Equal(t, domain.StatusActive, user.Status)
+	err := repo.Create(
+		ctx,
+		newTestUser("duplicate@example.com"),
+	)
+
+	assert.ErrorIs(
+		t,
+		err,
+		domain.ErrAlreadyExists,
+	)
 }
 
-func TestUserRepo_Create_DuplicateEmail_ReturnsAlreadyExists(t *testing.T) {
+func TestUserRepo_GetByID_Success(
+	t *testing.T,
+) {
 	repo := setupUserRepo(t)
 	ctx := context.Background()
 
-	user := newTestUser()
-	require.NoError(t, repo.Create(ctx, user))
+	created := newTestUser("get-by-id@example.com")
 
-	duplicate := newTestUser() // same email
-	err := repo.Create(ctx, duplicate)
+	require.NoError(
+		t,
+		repo.Create(ctx, created),
+	)
 
-	assert.ErrorIs(t, err, domain.ErrAlreadyExists)
-}
-
-// ── GetByID ───────────────────────────────────────────────────────────────────
-
-func TestUserRepo_GetByID_Success(t *testing.T) {
-	repo := setupUserRepo(t)
-	ctx := context.Background()
-
-	created := newTestUser()
-	require.NoError(t, repo.Create(ctx, created))
-
-	found, err := repo.GetByID(ctx, created.ID)
+	found, err := repo.GetByID(
+		ctx,
+		created.ID.String(),
+	)
 
 	require.NoError(t, err)
 	assert.Equal(t, created.ID, found.ID)
@@ -95,217 +114,393 @@ func TestUserRepo_GetByID_Success(t *testing.T) {
 	assert.Equal(t, created.FirstName, found.FirstName)
 }
 
-func TestUserRepo_GetByID_NotFound(t *testing.T) {
+func TestUserRepo_GetByID_NotFound(
+	t *testing.T,
+) {
 	repo := setupUserRepo(t)
 	ctx := context.Background()
 
-	_, err := repo.GetByID(ctx, "00000000-0000-0000-0000-000000000000")
+	_, err := repo.GetByID(
+		ctx,
+		uuid.NewString(),
+	)
 
-	assert.ErrorIs(t, err, domain.ErrNotFound)
+	assert.ErrorIs(
+		t,
+		err,
+		domain.ErrNotFound,
+	)
 }
 
-func TestUserRepo_GetByID_DeletedUser_ReturnsNotFound(t *testing.T) {
+func TestUserRepo_GetByID_DeletedUser_ReturnsNotFound(
+	t *testing.T,
+) {
 	repo := setupUserRepo(t)
 	ctx := context.Background()
 
-	user := newTestUser()
-	require.NoError(t, repo.Create(ctx, user))
-	require.NoError(t, repo.Delete(ctx, user.ID))
+	user := newTestUser("deleted-get@example.com")
 
-	_, err := repo.GetByID(ctx, user.ID)
-	assert.ErrorIs(t, err, domain.ErrNotFound)
+	require.NoError(
+		t,
+		repo.Create(ctx, user),
+	)
+
+	require.NoError(
+		t,
+		repo.Delete(
+			ctx,
+			user.ID.String(),
+		),
+	)
+
+	_, err := repo.GetByID(
+		ctx,
+		user.ID.String(),
+	)
+
+	assert.ErrorIs(
+		t,
+		err,
+		domain.ErrNotFound,
+	)
 }
 
-// ── GetByEmail ────────────────────────────────────────────────────────────────
-
-func TestUserRepo_GetByEmail_Success(t *testing.T) {
+func TestUserRepo_GetByEmail_Success(
+	t *testing.T,
+) {
 	repo := setupUserRepo(t)
 	ctx := context.Background()
 
-	created := newTestUser()
-	require.NoError(t, repo.Create(ctx, created))
+	created := newTestUser(
+		"get-by-email@example.com",
+	)
 
-	found, err := repo.GetByEmail(ctx, created.Email)
+	require.NoError(
+		t,
+		repo.Create(ctx, created),
+	)
+
+	found, err := repo.GetByEmail(
+		ctx,
+		created.Email,
+	)
 
 	require.NoError(t, err)
 	assert.Equal(t, created.ID, found.ID)
 	assert.Equal(t, created.Email, found.Email)
 }
 
-func TestUserRepo_GetByEmail_NotFound(t *testing.T) {
+func TestUserRepo_GetByEmail_NotFound(
+	t *testing.T,
+) {
 	repo := setupUserRepo(t)
 	ctx := context.Background()
 
-	_, err := repo.GetByEmail(ctx, "nobody@example.com")
+	_, err := repo.GetByEmail(
+		ctx,
+		"nobody@example.com",
+	)
 
-	assert.ErrorIs(t, err, domain.ErrNotFound)
+	assert.ErrorIs(
+		t,
+		err,
+		domain.ErrNotFound,
+	)
 }
 
-// ── Update ────────────────────────────────────────────────────────────────────
-
-func TestUserRepo_Update_Success(t *testing.T) {
+func TestUserRepo_Update_Success(
+	t *testing.T,
+) {
 	repo := setupUserRepo(t)
 	ctx := context.Background()
 
-	user := newTestUser()
-	require.NoError(t, repo.Create(ctx, user))
+	user := newTestUser("update@example.com")
+
+	require.NoError(
+		t,
+		repo.Create(ctx, user),
+	)
 
 	user.FirstName = "Jane"
 	user.LastName = "Smith"
 	user.Phone = "+254711111111"
 
 	err := repo.Update(ctx, user)
+
 	require.NoError(t, err)
 
-	updated, err := repo.GetByID(ctx, user.ID)
+	updated, err := repo.GetByID(
+		ctx,
+		user.ID.String(),
+	)
+
 	require.NoError(t, err)
 	assert.Equal(t, "Jane", updated.FirstName)
 	assert.Equal(t, "Smith", updated.LastName)
 	assert.Equal(t, "+254711111111", updated.Phone)
 }
 
-func TestUserRepo_Update_UpdatedAt_Changes(t *testing.T) {
+func TestUserRepo_Update_UpdatedAt_Changes(
+	t *testing.T,
+) {
 	repo := setupUserRepo(t)
 	ctx := context.Background()
 
-	user := newTestUser()
-	require.NoError(t, repo.Create(ctx, user))
+	user := newTestUser(
+		"updated-at@example.com",
+	)
+
+	require.NoError(
+		t,
+		repo.Create(ctx, user),
+	)
 
 	originalUpdatedAt := user.UpdatedAt
-	time.Sleep(10 * time.Millisecond) // ensure time advances
+
+	time.Sleep(10 * time.Millisecond)
 
 	user.FirstName = "Updated"
-	require.NoError(t, repo.Update(ctx, user))
 
-	assert.True(t, user.UpdatedAt.After(originalUpdatedAt),
-		"UpdatedAt should advance after Update")
+	require.NoError(
+		t,
+		repo.Update(ctx, user),
+	)
+
+	assert.True(
+		t,
+		user.UpdatedAt.After(originalUpdatedAt),
+	)
 }
 
-func TestUserRepo_Update_NonExistentUser_ReturnsNotFound(t *testing.T) {
+func TestUserRepo_Update_NonExistentUser_ReturnsNotFound(
+	t *testing.T,
+) {
 	repo := setupUserRepo(t)
 	ctx := context.Background()
 
-	user := &domain.User{
-		ID:        "00000000-0000-0000-0000-000000000000",
-		FirstName: "Ghost",
-	}
+	user := newTestUser("ghost@example.com")
+	user.ID = uuid.New()
+
 	err := repo.Update(ctx, user)
 
-	assert.ErrorIs(t, err, domain.ErrNotFound)
+	assert.ErrorIs(
+		t,
+		err,
+		domain.ErrNotFound,
+	)
 }
 
-// ── Delete ────────────────────────────────────────────────────────────────────
-
-func TestUserRepo_Delete_SoftDeletes(t *testing.T) {
+func TestUserRepo_Delete_SoftDeletes(
+	t *testing.T,
+) {
 	repo := setupUserRepo(t)
 	ctx := context.Background()
 
-	user := newTestUser()
-	require.NoError(t, repo.Create(ctx, user))
+	user := newTestUser(
+		"soft-delete@example.com",
+	)
 
-	err := repo.Delete(ctx, user.ID)
+	require.NoError(
+		t,
+		repo.Create(ctx, user),
+	)
+
+	err := repo.Delete(
+		ctx,
+		user.ID.String(),
+	)
+
 	require.NoError(t, err)
 
-	// should no longer be findable
-	_, err = repo.GetByID(ctx, user.ID)
-	assert.ErrorIs(t, err, domain.ErrNotFound)
+	_, err = repo.GetByID(
+		ctx,
+		user.ID.String(),
+	)
+
+	assert.ErrorIs(
+		t,
+		err,
+		domain.ErrNotFound,
+	)
 }
 
-func TestUserRepo_Delete_NonExistent_ReturnsNotFound(t *testing.T) {
+func TestUserRepo_Delete_NonExistent_ReturnsNotFound(
+	t *testing.T,
+) {
 	repo := setupUserRepo(t)
 	ctx := context.Background()
 
-	err := repo.Delete(ctx, "00000000-0000-0000-0000-000000000000")
-	assert.ErrorIs(t, err, domain.ErrNotFound)
+	err := repo.Delete(
+		ctx,
+		uuid.NewString(),
+	)
+
+	assert.ErrorIs(
+		t,
+		err,
+		domain.ErrNotFound,
+	)
 }
 
-// ── List ──────────────────────────────────────────────────────────────────────
-
-func TestUserRepo_List_ReturnsPaginatedResults(t *testing.T) {
+func TestUserRepo_List_ReturnsPaginatedResults(
+	t *testing.T,
+) {
 	repo := setupUserRepo(t)
 	ctx := context.Background()
 
-	// create 5 users
 	emails := []string{
-		"a@example.com", "b@example.com", "c@example.com",
-		"d@example.com", "e@example.com",
-	}
-	for _, email := range emails {
-		u := newTestUser()
-		u.Email = email
-		require.NoError(t, repo.Create(ctx, u))
+		"a@example.com",
+		"b@example.com",
+		"c@example.com",
+		"d@example.com",
+		"e@example.com",
 	}
 
-	req := domain.ListUsersRequest{Page: 1, PerPage: 3}
-	users, total, err := repo.List(ctx, req)
+	for _, email := range emails {
+		require.NoError(
+			t,
+			repo.Create(
+				ctx,
+				newTestUser(email),
+			),
+		)
+	}
+
+	users, total, err := repo.List(
+		ctx,
+		domain.ListUsersRequest{
+			Page:    1,
+			PerPage: 3,
+		},
+	)
 
 	require.NoError(t, err)
 	assert.Equal(t, int64(5), total)
 	assert.Len(t, users, 3)
 }
 
-func TestUserRepo_List_FilterByStatus(t *testing.T) {
+func TestUserRepo_List_FilterByStatus(
+	t *testing.T,
+) {
 	repo := setupUserRepo(t)
 	ctx := context.Background()
 
-	active := newTestUser()
-	active.Email = "active@example.com"
-	require.NoError(t, repo.Create(ctx, active))
+	active := newTestUser(
+		"active@example.com",
+	)
 
-	suspended := newTestUser()
-	suspended.Email = "suspended@example.com"
-	require.NoError(t, repo.Create(ctx, suspended))
-	// manually set suspended
-	require.NoError(t, repo.Update(ctx, &domain.User{
-		ID:        suspended.ID,
-		FirstName: suspended.FirstName,
-		LastName:  suspended.LastName,
-		Status:    domain.StatusSuspended,
-	}))
+	require.NoError(
+		t,
+		repo.Create(ctx, active),
+	)
 
-	req := domain.ListUsersRequest{Status: string(domain.StatusActive), Page: 1, PerPage: 20}
-	users, total, err := repo.List(ctx, req)
+	suspended := newTestUser(
+		"suspended@example.com",
+	)
+	suspended.IsActive = false
+
+	require.NoError(
+		t,
+		repo.Create(ctx, suspended),
+	)
+
+	users, total, err := repo.List(
+		ctx,
+		domain.ListUsersRequest{
+			Status:  string(domain.StatusActive),
+			Page:    1,
+			PerPage: 20,
+		},
+	)
 
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), total)
 	assert.Len(t, users, 1)
-	assert.Equal(t, "active@example.com", users[0].Email)
+	assert.Equal(
+		t,
+		"active@example.com",
+		users[0].Email,
+	)
 }
 
-func TestUserRepo_List_ExcludesDeletedUsers(t *testing.T) {
+func TestUserRepo_List_ExcludesDeletedUsers(
+	t *testing.T,
+) {
 	repo := setupUserRepo(t)
 	ctx := context.Background()
 
-	kept := newTestUser()
-	kept.Email = "kept@example.com"
-	require.NoError(t, repo.Create(ctx, kept))
+	kept := newTestUser(
+		"kept@example.com",
+	)
 
-	deleted := newTestUser()
-	deleted.Email = "deleted@example.com"
-	require.NoError(t, repo.Create(ctx, deleted))
-	require.NoError(t, repo.Delete(ctx, deleted.ID))
+	require.NoError(
+		t,
+		repo.Create(ctx, kept),
+	)
 
-	req := domain.ListUsersRequest{Page: 1, PerPage: 20}
-	users, total, err := repo.List(ctx, req)
+	deleted := newTestUser(
+		"deleted@example.com",
+	)
+
+	require.NoError(
+		t,
+		repo.Create(ctx, deleted),
+	)
+
+	require.NoError(
+		t,
+		repo.Delete(
+			ctx,
+			deleted.ID.String(),
+		),
+	)
+
+	users, total, err := repo.List(
+		ctx,
+		domain.ListUsersRequest{
+			Page:    1,
+			PerPage: 20,
+		},
+	)
 
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), total)
 	assert.Len(t, users, 1)
-	assert.Equal(t, "kept@example.com", users[0].Email)
+	assert.Equal(
+		t,
+		"kept@example.com",
+		users[0].Email,
+	)
 }
 
-func TestUserRepo_List_SecondPage(t *testing.T) {
+func TestUserRepo_List_SecondPage(
+	t *testing.T,
+) {
 	repo := setupUserRepo(t)
 	ctx := context.Background()
 
 	for i := 0; i < 5; i++ {
-		u := newTestUser()
-		u.Email = "user" + string(rune('0'+i)) + "@example.com"
-		require.NoError(t, repo.Create(ctx, u))
+		email := fmt.Sprintf(
+			"user%d@example.com",
+			i,
+		)
+
+		require.NoError(
+			t,
+			repo.Create(
+				ctx,
+				newTestUser(email),
+			),
+		)
 	}
 
-	req := domain.ListUsersRequest{Page: 2, PerPage: 2}
-	users, total, err := repo.List(ctx, req)
+	users, total, err := repo.List(
+		ctx,
+		domain.ListUsersRequest{
+			Page:    2,
+			PerPage: 2,
+		},
+	)
 
 	require.NoError(t, err)
 	assert.Equal(t, int64(5), total)

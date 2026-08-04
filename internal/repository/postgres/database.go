@@ -1,66 +1,117 @@
 package postgres
 
 import (
-	"log"
-	"storemesh-user-service/internal/models"
+	"context"
+	"fmt"
 	"time"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 	"gorm.io/gorm/schema"
+
+	"storemesh-user-service/internal/models"
 )
 
-var DB *gorm.DB
-
-func OpenPostgres(dsn string, maxOpen, maxIdle int, connMaxLifetime time.Duration) (*gorm.DB, error) {
-	var err error
-
-	DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
-		SkipDefaultTransaction: true,
-		NamingStrategy: schema.NamingStrategy{
-			SingularTable: true,
+func OpenPostgres(
+	dsn string,
+	maxOpen int,
+	maxIdle int,
+	connMaxLifetime time.Duration,
+) (*gorm.DB, error) {
+	db, err := gorm.Open(
+		postgres.Open(dsn),
+		&gorm.Config{
+			SkipDefaultTransaction: true,
+			TranslateError:         true,
+			NamingStrategy: schema.NamingStrategy{
+				SingularTable: true,
+			},
+			Logger: logger.Default.LogMode(logger.Warn),
 		},
-		Logger: logger.Default.LogMode(logger.Warn),
-	})
-
+	)
 	if err != nil {
-		log.Fatal(err)
-		return nil, err
+		return nil, fmt.Errorf(
+			"open postgres: %w",
+			err,
+		)
 	}
-	_, err = applyPoolSettings(DB, maxOpen, maxIdle, connMaxLifetime)
 
-	if err != nil {
-		log.Fatal(err)
-		return nil, err
-	}
-	return DB, nil
-}
-
-func applyPoolSettings(db *gorm.DB, maxOpen, maxIdle int, connMaxLifetime time.Duration) (*gorm.DB, error) {
 	sqlDB, err := db.DB()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf(
+			"get postgres connection pool: %w",
+			err,
+		)
 	}
+
 	sqlDB.SetMaxOpenConns(maxOpen)
 	sqlDB.SetMaxIdleConns(maxIdle)
 	sqlDB.SetConnMaxLifetime(connMaxLifetime)
+
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		5*time.Second,
+	)
+	defer cancel()
+
+	if err := sqlDB.PingContext(ctx); err != nil {
+		_ = sqlDB.Close()
+
+		return nil, fmt.Errorf(
+			"ping postgres: %w",
+			err,
+		)
+	}
+
 	return db, nil
 }
 
-// MigrateAndSeed runs AutoMigrate and seeds default roles.
-// Call once on startup before serving traffic.
+// MigrateAndSeed runs the current development migration and seeds default
+// roles.
+//
+// AutoMigrate should be replaced with versioned migrations before production
+// rollout.
 func MigrateAndSeed(db *gorm.DB) error {
-	if err := db.AutoMigrate(&models.User{}, &models.Role{}); err != nil {
-		return err
+	if err := db.AutoMigrate(
+		&models.User{},
+		&models.Role{},
+	); err != nil {
+		return fmt.Errorf(
+			"auto migrate: %w",
+			err,
+		)
 	}
+
 	roles := []models.Role{
-		{Name: "customer", Description: "Standard customer account"},
-		{Name: "admin", Description: "Platform administrator"},
-		{Name: "seller", Description: "Marketplace seller"},
+		{
+			Name:        "customer",
+			Description: "Standard customer account",
+		},
+		{
+			Name:        "admin",
+			Description: "Platform administrator",
+		},
+		{
+			Name:        "seller",
+			Description: "Marketplace seller",
+		},
 	}
-	for _, r := range roles {
-		db.Where(models.Role{Name: r.Name}).FirstOrCreate(&r)
+
+	for i := range roles {
+		role := &roles[i]
+
+		if err := db.
+			Where(models.Role{Name: role.Name}).
+			FirstOrCreate(role).
+			Error; err != nil {
+			return fmt.Errorf(
+				"seed role %q: %w",
+				role.Name,
+				err,
+			)
+		}
 	}
+
 	return nil
 }
