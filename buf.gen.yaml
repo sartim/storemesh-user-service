@@ -1,5 +1,5 @@
 version: v2
-clean: true
+clean: false
 managed:
   enabled: true
 plugins:
@@ -12,5 +12,8 @@ plugins:
     out: gen
     opt:
       - paths=source_relative
+
+  - remote: buf.build/grpc-ecosystem/openapiv2
+    out: proto
 inputs:
   - directory: proto

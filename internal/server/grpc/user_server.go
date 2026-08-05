@@ -163,6 +163,70 @@ func (s *UserGRPCServer) Authenticate(
 	}, nil
 }
 
+func (s *UserGRPCServer) ListRoles(
+	ctx context.Context,
+	_ *userv1.ListRolesRequest,
+) (*userv1.ListRolesResponse, error) {
+	if err := requireRole(ctx, domain.RoleAdmin); err != nil {
+		return nil, err
+	}
+
+	roles, err := s.service.ListRoles(ctx)
+	if err != nil {
+		return nil, toGRPCError(err)
+	}
+
+	return toProtoRoles(roles), nil
+}
+
+func (s *UserGRPCServer) GetUserRoles(
+	ctx context.Context,
+	req *userv1.GetUserRolesRequest,
+) (*userv1.GetUserRolesResponse, error) {
+	if err := requireSelfOrRole(ctx, req.UserId, domain.RoleAdmin); err != nil {
+		return nil, err
+	}
+
+	roles, err := s.service.GetUserRoles(ctx, req.UserId)
+	if err != nil {
+		return nil, toGRPCError(err)
+	}
+
+	return &userv1.GetUserRolesResponse{Roles: toProtoRoleSlice(roles)}, nil
+}
+
+func (s *UserGRPCServer) AssignRole(
+	ctx context.Context,
+	req *userv1.AssignRoleRequest,
+) (*userv1.AssignRoleResponse, error) {
+	if err := requireRole(ctx, domain.RoleAdmin); err != nil {
+		return nil, err
+	}
+
+	user, err := s.service.AssignRole(ctx, req.UserId, req.Role)
+	if err != nil {
+		return nil, toGRPCError(err)
+	}
+
+	return &userv1.AssignRoleResponse{User: toProto(user)}, nil
+}
+
+func (s *UserGRPCServer) RevokeRole(
+	ctx context.Context,
+	req *userv1.RevokeRoleRequest,
+) (*userv1.RevokeRoleResponse, error) {
+	if err := requireRole(ctx, domain.RoleAdmin); err != nil {
+		return nil, err
+	}
+
+	user, err := s.service.RevokeRole(ctx, req.UserId, req.Role)
+	if err != nil {
+		return nil, toGRPCError(err)
+	}
+
+	return &userv1.RevokeRoleResponse{User: toProto(user)}, nil
+}
+
 func requireSelfOrRole(
 	ctx context.Context,
 	requestedUserID string,
@@ -225,6 +289,11 @@ func toProto(
 		return nil
 	}
 
+	roles := make([]string, 0, len(user.Roles))
+	for _, role := range user.Roles {
+		roles = append(roles, role.Name)
+	}
+
 	return &userv1.User{
 		Id:        user.ID,
 		Email:     user.Email,
@@ -232,7 +301,26 @@ func toProto(
 		LastName:  user.LastName,
 		Phone:     user.Phone,
 		IsActive:  user.IsActive(),
+		Roles:     roles,
 	}
+}
+
+func toProtoRoles(roles []domain.Role) *userv1.ListRolesResponse {
+	return &userv1.ListRolesResponse{Roles: toProtoRoleSlice(roles)}
+}
+
+func toProtoRoleSlice(roles []domain.Role) []*userv1.Role {
+	response := make([]*userv1.Role, 0, len(roles))
+
+	for _, role := range roles {
+		response = append(response, &userv1.Role{
+			Id:          role.ID,
+			Name:        role.Name,
+			Description: role.Description,
+		})
+	}
+
+	return response
 }
 
 func toGRPCError(

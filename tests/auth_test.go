@@ -176,6 +176,72 @@ func (r *fakeAuthUserRepository) List(
 	), nil
 }
 
+func (r *fakeAuthUserRepository) ListRoles(
+	_ context.Context,
+) ([]domain.Role, error) {
+	return []domain.Role{
+		{Name: domain.RoleAdmin},
+		{Name: domain.RoleCustomer},
+		{Name: domain.RoleSeller},
+	}, nil
+}
+
+func (r *fakeAuthUserRepository) AssignRole(
+	_ context.Context,
+	userID string,
+	roleName string,
+) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	user, exists := r.users[userID]
+	if !exists || !isKnownRole(roleName) {
+		return domain.ErrNotFound
+	}
+
+	for _, role := range user.Roles {
+		if role.Name == roleName {
+			return domain.ErrAlreadyExists
+		}
+	}
+
+	user.Roles = append(user.Roles, domain.Role{Name: roleName})
+
+	return nil
+}
+
+func (r *fakeAuthUserRepository) RevokeRole(
+	_ context.Context,
+	userID string,
+	roleName string,
+) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	user, exists := r.users[userID]
+	if !exists || !isKnownRole(roleName) {
+		return domain.ErrNotFound
+	}
+
+	for i, role := range user.Roles {
+		if role.Name == roleName {
+			user.Roles = append(user.Roles[:i], user.Roles[i+1:]...)
+			return nil
+		}
+	}
+
+	return domain.ErrNotFound
+}
+
+func isKnownRole(roleName string) bool {
+	switch roleName {
+	case domain.RoleAdmin, domain.RoleCustomer, domain.RoleSeller:
+		return true
+	default:
+		return false
+	}
+}
+
 type fakeAuthSessionStore struct {
 	mu       sync.RWMutex
 	sessions map[string]*domain.AuthSession
@@ -365,6 +431,72 @@ func TestAuthenticate_IssuesDistinctAccessAndRefreshTokens(
 		accessClaims.TokenID,
 		refreshClaims.TokenID,
 	)
+
+	assert.ElementsMatch(
+		t,
+		[]string{domain.RoleCustomer, domain.RoleSeller},
+		accessClaims.Roles,
+	)
+}
+
+func TestCreateUser_AssignsDefaultCustomerRole(t *testing.T) {
+	userService, _, _ := newAuthenticationTestService(t)
+
+	user, err := userService.CreateUser(
+		context.Background(),
+		domain.CreateUserRequest{
+			Email:     "new-customer@example.com",
+			Password:  "strong-password",
+			FirstName: "New",
+			LastName:  "Customer",
+		},
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{domain.RoleCustomer}, roleNamesForTest(user.Roles))
+}
+
+func TestAssignRole_RevokesExistingSessionsAndPersistsRole(t *testing.T) {
+	userService, sessions, user := newAuthenticationTestService(t)
+
+	_, pair, err := userService.Authenticate(
+		context.Background(),
+		domain.AuthRequest{Email: user.Email, Password: "correct-password"},
+	)
+	require.NoError(t, err)
+
+	updated, err := userService.AssignRole(
+		context.Background(),
+		user.ID,
+		" ADMIN ",
+	)
+	require.NoError(t, err)
+	assert.Contains(t, roleNamesForTest(updated.Roles), domain.RoleAdmin)
+
+	_, err = userService.ValidateToken(context.Background(), pair.AccessToken)
+	assert.ErrorIs(t, err, domain.ErrInvalidToken)
+	assert.Empty(t, sessions.sessions)
+}
+
+func TestRevokeRole_RevokesExistingSessionsAndRemovesRole(t *testing.T) {
+	userService, _, user := newAuthenticationTestService(t)
+
+	_, pair, err := userService.Authenticate(
+		context.Background(),
+		domain.AuthRequest{Email: user.Email, Password: "correct-password"},
+	)
+	require.NoError(t, err)
+
+	updated, err := userService.RevokeRole(
+		context.Background(),
+		user.ID,
+		domain.RoleSeller,
+	)
+	require.NoError(t, err)
+	assert.NotContains(t, roleNamesForTest(updated.Roles), domain.RoleSeller)
+
+	_, err = userService.ValidateToken(context.Background(), pair.AccessToken)
+	assert.ErrorIs(t, err, domain.ErrInvalidToken)
 }
 
 func TestRefreshToken_RejectsAccessToken(
@@ -705,8 +837,12 @@ func newAuthenticationTestService(
 		FirstName:    "Auth",
 		LastName:     "User",
 		Status:       domain.StatusActive,
-		CreatedAt:    time.Now().UTC(),
-		UpdatedAt:    time.Now().UTC(),
+		Roles: []domain.Role{
+			{Name: domain.RoleCustomer},
+			{Name: domain.RoleSeller},
+		},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
 	}
 
 	repository := newFakeAuthUserRepository(
@@ -737,8 +873,18 @@ func cloneDomainUser(
 	}
 
 	cloned := *user
+	cloned.Roles = append([]domain.Role(nil), user.Roles...)
 
 	return &cloned
+}
+
+func roleNamesForTest(roles []domain.Role) []string {
+	names := make([]string, 0, len(roles))
+	for _, role := range roles {
+		names = append(names, role.Name)
+	}
+
+	return names
 }
 
 func cloneAuthSession(

@@ -89,6 +89,30 @@ func RequireSelfOrRole(
 	}
 }
 
+// RequireRole allows the request when the authenticated user has one of the
+// supplied roles.
+func RequireRole(
+	roles ...string,
+) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		claims, err := authcontext.RequireClaims(c.Request.Context())
+		if err != nil {
+			writeUnauthorized(c)
+			return
+		}
+
+		if authcontext.HasAnyRole(claims, roles...) {
+			c.Next()
+			return
+		}
+
+		c.AbortWithStatusJSON(
+			http.StatusForbidden,
+			gin.H{"error": "forbidden"},
+		)
+	}
+}
+
 func writeUnauthorized(
 	c *gin.Context,
 ) {

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -104,6 +106,9 @@ func (s *userService) CreateUser(
 		LastName:     strings.TrimSpace(req.LastName),
 		Phone:        strings.TrimSpace(req.Phone),
 		Status:       domain.StatusActive,
+		Roles: []domain.Role{
+			{Name: domain.RoleCustomer},
+		},
 	}
 
 	if err := s.users.Create(
@@ -271,6 +276,89 @@ func (s *userService) ListUsers(
 		Page:    req.Page,
 		PerPage: req.PerPage,
 	}, nil
+}
+
+func (s *userService) ListRoles(
+	ctx context.Context,
+) ([]domain.Role, error) {
+	return s.users.ListRoles(ctx)
+}
+
+func (s *userService) GetUserRoles(
+	ctx context.Context,
+	userID string,
+) ([]domain.Role, error) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return nil, fmt.Errorf(
+			"%w: user id is required",
+			domain.ErrInvalidInput,
+		)
+	}
+
+	user, err := s.users.GetByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	return append([]domain.Role(nil), user.Roles...), nil
+}
+
+func (s *userService) AssignRole(
+	ctx context.Context,
+	userID string,
+	roleName string,
+) (*domain.User, error) {
+	userID, roleName, err := normalizeRoleOperation(userID, roleName)
+	if err != nil {
+		return nil, err
+	}
+
+	// Revoke active sessions before changing authorization data. This fails
+	// closed: no previously issued token can retain stale permissions after a
+	// successful role change.
+	if err := s.sessions.DeleteAllForUser(ctx, userID); err != nil {
+		return nil, fmt.Errorf("revoke user sessions: %w", err)
+	}
+
+	if err := s.users.AssignRole(ctx, userID, roleName); err != nil {
+		return nil, err
+	}
+
+	s.log.Info(
+		"user role assigned",
+		zap.String("user_id", userID),
+		zap.String("role", roleName),
+	)
+
+	return s.users.GetByID(ctx, userID)
+}
+
+func (s *userService) RevokeRole(
+	ctx context.Context,
+	userID string,
+	roleName string,
+) (*domain.User, error) {
+	userID, roleName, err := normalizeRoleOperation(userID, roleName)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.sessions.DeleteAllForUser(ctx, userID); err != nil {
+		return nil, fmt.Errorf("revoke user sessions: %w", err)
+	}
+
+	if err := s.users.RevokeRole(ctx, userID, roleName); err != nil {
+		return nil, err
+	}
+
+	s.log.Info(
+		"user role revoked",
+		zap.String("user_id", userID),
+		zap.String("role", roleName),
+	)
+
+	return s.users.GetByID(ctx, userID)
 }
 
 func (s *userService) Authenticate(
@@ -524,6 +612,10 @@ func (s *userService) validateToken(
 		return nil, nil, domain.ErrInvalidToken
 	}
 
+	if !slices.Equal(session.Roles, parsedClaims.Roles) {
+		return nil, nil, domain.ErrInvalidToken
+	}
+
 	switch parsedClaims.TokenType {
 	case domain.TokenTypeAccess:
 		if session.AccessTokenID != parsedClaims.ID {
@@ -634,9 +726,7 @@ func (s *userService) issueTokenPair(
 		s.refreshTTL,
 	)
 
-	// Roles are intentionally empty until persisted user-role associations are
-	// introduced in the RBAC milestone.
-	roles := []string{}
+	roles := roleNames(user.Roles)
 
 	accessToken, err := s.signJWT(
 		user,
@@ -733,6 +823,43 @@ func normalizeEmail(
 	return strings.ToLower(
 		strings.TrimSpace(email),
 	)
+}
+
+func normalizeRoleOperation(
+	userID string,
+	roleName string,
+) (string, string, error) {
+	userID = strings.TrimSpace(userID)
+	roleName = strings.ToLower(strings.TrimSpace(roleName))
+
+	if userID == "" {
+		return "", "", fmt.Errorf(
+			"%w: user id is required",
+			domain.ErrInvalidInput,
+		)
+	}
+
+	if roleName == "" {
+		return "", "", fmt.Errorf(
+			"%w: role name is required",
+			domain.ErrInvalidInput,
+		)
+	}
+
+	return userID, roleName, nil
+}
+
+func roleNames(roles []domain.Role) []string {
+	names := make([]string, 0, len(roles))
+	for _, role := range roles {
+		if role.Name != "" {
+			names = append(names, role.Name)
+		}
+	}
+
+	sort.Strings(names)
+
+	return names
 }
 
 var _ domain.UserService = (*userService)(nil)

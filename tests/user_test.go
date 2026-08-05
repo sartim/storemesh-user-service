@@ -111,6 +111,67 @@ func TestUserRepo_GetByID_Success(t *testing.T) {
 	assert.Equal(t, domain.StatusActive, found.Status)
 }
 
+func TestUserRepo_Create_PersistsRoles(t *testing.T) {
+	repo := setupUserRepo(t)
+	ctx := context.Background()
+
+	user := newTestUser("roles@example.com")
+	user.Roles = []domain.Role{{Name: domain.RoleCustomer}}
+
+	require.NoError(t, repo.Create(ctx, user))
+	require.Len(t, user.Roles, 1)
+	assert.Equal(t, domain.RoleCustomer, user.Roles[0].Name)
+	assert.NotEmpty(t, user.Roles[0].ID)
+
+	loaded, err := repo.GetByID(ctx, user.ID)
+	require.NoError(t, err)
+	require.Len(t, loaded.Roles, 1)
+	assert.Equal(t, domain.RoleCustomer, loaded.Roles[0].Name)
+}
+
+func TestUserRepo_AssignAndRevokeRole(t *testing.T) {
+	repo := setupUserRepo(t)
+	ctx := context.Background()
+
+	user := newTestUser("manage-roles@example.com")
+	user.Roles = []domain.Role{{Name: domain.RoleCustomer}}
+	require.NoError(t, repo.Create(ctx, user))
+
+	require.NoError(t, repo.AssignRole(ctx, user.ID, domain.RoleSeller))
+	assert.ErrorIs(
+		t,
+		repo.AssignRole(ctx, user.ID, domain.RoleSeller),
+		domain.ErrAlreadyExists,
+	)
+
+	loaded, err := repo.GetByID(ctx, user.ID)
+	require.NoError(t, err)
+	assert.ElementsMatch(
+		t,
+		[]string{domain.RoleCustomer, domain.RoleSeller},
+		testRoleNames(loaded.Roles),
+	)
+
+	require.NoError(t, repo.RevokeRole(ctx, user.ID, domain.RoleSeller))
+	assert.ErrorIs(
+		t,
+		repo.RevokeRole(ctx, user.ID, domain.RoleSeller),
+		domain.ErrNotFound,
+	)
+}
+
+func TestUserRepo_ListRoles(t *testing.T) {
+	repo := setupUserRepo(t)
+
+	roles, err := repo.ListRoles(context.Background())
+	require.NoError(t, err)
+	assert.Equal(
+		t,
+		[]string{domain.RoleAdmin, domain.RoleCustomer, domain.RoleSeller},
+		testRoleNames(roles),
+	)
+}
+
 func TestUserRepo_GetByID_NotFound(t *testing.T) {
 	repo := setupUserRepo(t)
 	ctx := context.Background()
@@ -511,4 +572,13 @@ func TestUserRepo_List_SecondPage(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(5), total)
 	assert.Len(t, users, 2)
+}
+
+func testRoleNames(roles []domain.Role) []string {
+	names := make([]string, 0, len(roles))
+	for _, role := range roles {
+		names = append(names, role.Name)
+	}
+
+	return names
 }

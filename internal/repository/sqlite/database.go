@@ -41,9 +41,23 @@ func OpenSQLite() (*gorm.DB, error) {
 
 	sqlDB.SetMaxOpenConns(1)
 
+	if err := db.SetupJoinTable(
+		&models.User{},
+		"Roles",
+		&models.UserRole{},
+	); err != nil {
+		_ = sqlDB.Close()
+
+		return nil, fmt.Errorf(
+			"configure sqlite user role join table: %w",
+			err,
+		)
+	}
+
 	if err := db.AutoMigrate(
 		&models.User{},
 		&models.Role{},
+		&models.UserRole{},
 	); err != nil {
 		_ = sqlDB.Close()
 

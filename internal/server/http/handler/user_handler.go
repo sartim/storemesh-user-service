@@ -79,6 +79,31 @@ func (h *UserHandler) RegisterRoutes(
 		h.DeleteUser,
 	)
 
+	protectedUsers.GET(
+		"/:id/roles",
+		httpmiddleware.RequireSelfOrRole("id", domain.RoleAdmin),
+		h.GetUserRoles,
+	)
+
+	protectedUsers.PUT(
+		"/:id/roles/:role",
+		httpmiddleware.RequireRole(domain.RoleAdmin),
+		h.AssignRole,
+	)
+
+	protectedUsers.DELETE(
+		"/:id/roles/:role",
+		httpmiddleware.RequireRole(domain.RoleAdmin),
+		h.RevokeRole,
+	)
+
+	protectedRoles := router.Group("/roles")
+	protectedRoles.Use(
+		httpmiddleware.Authentication(h.service),
+		httpmiddleware.RequireRole(domain.RoleAdmin),
+	)
+	protectedRoles.GET("", h.ListRoles)
+
 	authRoutes := router.Group(
 		"/auth",
 	)
