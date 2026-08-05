@@ -24,6 +24,10 @@ const (
 	UserService_ListUsers_FullMethodName    = "/user.v1.UserService/ListUsers"
 	UserService_DeleteUser_FullMethodName   = "/user.v1.UserService/DeleteUser"
 	UserService_Authenticate_FullMethodName = "/user.v1.UserService/Authenticate"
+	UserService_ListRoles_FullMethodName    = "/user.v1.UserService/ListRoles"
+	UserService_GetUserRoles_FullMethodName = "/user.v1.UserService/GetUserRoles"
+	UserService_AssignRole_FullMethodName   = "/user.v1.UserService/AssignRole"
+	UserService_RevokeRole_FullMethodName   = "/user.v1.UserService/RevokeRole"
 )
 
 // UserServiceClient is the client API for UserService service.
@@ -35,6 +39,10 @@ type UserServiceClient interface {
 	ListUsers(ctx context.Context, in *ListUsersRequest, opts ...grpc.CallOption) (*ListUsersResponse, error)
 	DeleteUser(ctx context.Context, in *DeleteUserRequest, opts ...grpc.CallOption) (*DeleteUserResponse, error)
 	Authenticate(ctx context.Context, in *AuthRequest, opts ...grpc.CallOption) (*AuthResponse, error)
+	ListRoles(ctx context.Context, in *ListRolesRequest, opts ...grpc.CallOption) (*ListRolesResponse, error)
+	GetUserRoles(ctx context.Context, in *GetUserRolesRequest, opts ...grpc.CallOption) (*GetUserRolesResponse, error)
+	AssignRole(ctx context.Context, in *AssignRoleRequest, opts ...grpc.CallOption) (*AssignRoleResponse, error)
+	RevokeRole(ctx context.Context, in *RevokeRoleRequest, opts ...grpc.CallOption) (*RevokeRoleResponse, error)
 }
 
 type userServiceClient struct {
@@ -95,6 +103,46 @@ func (c *userServiceClient) Authenticate(ctx context.Context, in *AuthRequest, o
 	return out, nil
 }
 
+func (c *userServiceClient) ListRoles(ctx context.Context, in *ListRolesRequest, opts ...grpc.CallOption) (*ListRolesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListRolesResponse)
+	err := c.cc.Invoke(ctx, UserService_ListRoles_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *userServiceClient) GetUserRoles(ctx context.Context, in *GetUserRolesRequest, opts ...grpc.CallOption) (*GetUserRolesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetUserRolesResponse)
+	err := c.cc.Invoke(ctx, UserService_GetUserRoles_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *userServiceClient) AssignRole(ctx context.Context, in *AssignRoleRequest, opts ...grpc.CallOption) (*AssignRoleResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AssignRoleResponse)
+	err := c.cc.Invoke(ctx, UserService_AssignRole_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *userServiceClient) RevokeRole(ctx context.Context, in *RevokeRoleRequest, opts ...grpc.CallOption) (*RevokeRoleResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RevokeRoleResponse)
+	err := c.cc.Invoke(ctx, UserService_RevokeRole_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // UserServiceServer is the server API for UserService service.
 // All implementations must embed UnimplementedUserServiceServer
 // for forward compatibility.
@@ -104,6 +152,10 @@ type UserServiceServer interface {
 	ListUsers(context.Context, *ListUsersRequest) (*ListUsersResponse, error)
 	DeleteUser(context.Context, *DeleteUserRequest) (*DeleteUserResponse, error)
 	Authenticate(context.Context, *AuthRequest) (*AuthResponse, error)
+	ListRoles(context.Context, *ListRolesRequest) (*ListRolesResponse, error)
+	GetUserRoles(context.Context, *GetUserRolesRequest) (*GetUserRolesResponse, error)
+	AssignRole(context.Context, *AssignRoleRequest) (*AssignRoleResponse, error)
+	RevokeRole(context.Context, *RevokeRoleRequest) (*RevokeRoleResponse, error)
 	mustEmbedUnimplementedUserServiceServer()
 }
 
@@ -128,6 +180,18 @@ func (UnimplementedUserServiceServer) DeleteUser(context.Context, *DeleteUserReq
 }
 func (UnimplementedUserServiceServer) Authenticate(context.Context, *AuthRequest) (*AuthResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Authenticate not implemented")
+}
+func (UnimplementedUserServiceServer) ListRoles(context.Context, *ListRolesRequest) (*ListRolesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListRoles not implemented")
+}
+func (UnimplementedUserServiceServer) GetUserRoles(context.Context, *GetUserRolesRequest) (*GetUserRolesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetUserRoles not implemented")
+}
+func (UnimplementedUserServiceServer) AssignRole(context.Context, *AssignRoleRequest) (*AssignRoleResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AssignRole not implemented")
+}
+func (UnimplementedUserServiceServer) RevokeRole(context.Context, *RevokeRoleRequest) (*RevokeRoleResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RevokeRole not implemented")
 }
 func (UnimplementedUserServiceServer) mustEmbedUnimplementedUserServiceServer() {}
 func (UnimplementedUserServiceServer) testEmbeddedByValue()                     {}
@@ -240,6 +304,78 @@ func _UserService_Authenticate_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _UserService_ListRoles_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListRolesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserServiceServer).ListRoles(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserService_ListRoles_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserServiceServer).ListRoles(ctx, req.(*ListRolesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _UserService_GetUserRoles_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetUserRolesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserServiceServer).GetUserRoles(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserService_GetUserRoles_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserServiceServer).GetUserRoles(ctx, req.(*GetUserRolesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _UserService_AssignRole_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AssignRoleRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserServiceServer).AssignRole(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserService_AssignRole_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserServiceServer).AssignRole(ctx, req.(*AssignRoleRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _UserService_RevokeRole_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RevokeRoleRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserServiceServer).RevokeRole(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserService_RevokeRole_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserServiceServer).RevokeRole(ctx, req.(*RevokeRoleRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // UserService_ServiceDesc is the grpc.ServiceDesc for UserService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -266,6 +402,22 @@ var UserService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Authenticate",
 			Handler:    _UserService_Authenticate_Handler,
+		},
+		{
+			MethodName: "ListRoles",
+			Handler:    _UserService_ListRoles_Handler,
+		},
+		{
+			MethodName: "GetUserRoles",
+			Handler:    _UserService_GetUserRoles_Handler,
+		},
+		{
+			MethodName: "AssignRole",
+			Handler:    _UserService_AssignRole_Handler,
+		},
+		{
+			MethodName: "RevokeRole",
+			Handler:    _UserService_RevokeRole_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

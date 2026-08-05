@@ -409,3 +409,48 @@ func TestRequireSelfOrRole_AllowsAdministrativeRole(
 		response.Code,
 	)
 }
+
+func TestRequireRole_EnforcesAdministrativeRole(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	validator := &stubTokenValidator{
+		claimsByToken: map[string]*domain.TokenClaims{
+			"admin-token": {
+				UserID:    "admin-1",
+				Roles:     []string{domain.RoleAdmin},
+				TokenType: domain.TokenTypeAccess,
+			},
+			"customer-token": {
+				UserID:    "customer-1",
+				Roles:     []string{domain.RoleCustomer},
+				TokenType: domain.TokenTypeAccess,
+			},
+		},
+	}
+
+	for _, test := range []struct {
+		name       string
+		token      string
+		wantStatus int
+	}{
+		{name: "admin allowed", token: "admin-token", wantStatus: http.StatusOK},
+		{name: "customer forbidden", token: "customer-token", wantStatus: http.StatusForbidden},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			router := gin.New()
+			router.GET(
+				"/admin",
+				Authentication(validator),
+				RequireRole(domain.RoleAdmin),
+				func(c *gin.Context) { c.Status(http.StatusOK) },
+			)
+
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodGet, "/admin", nil)
+			request.Header.Set("Authorization", "Bearer "+test.token)
+
+			router.ServeHTTP(response, request)
+			assert.Equal(t, test.wantStatus, response.Code)
+		})
+	}
+}

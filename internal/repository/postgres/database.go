@@ -73,9 +73,18 @@ func OpenPostgres(
 // AutoMigrate should be replaced with versioned migrations before production
 // rollout.
 func MigrateAndSeed(db *gorm.DB) error {
+	if err := db.SetupJoinTable(
+		&models.User{},
+		"Roles",
+		&models.UserRole{},
+	); err != nil {
+		return fmt.Errorf("configure user role join table: %w", err)
+	}
+
 	if err := db.AutoMigrate(
 		&models.User{},
 		&models.Role{},
+		&models.UserRole{},
 	); err != nil {
 		return fmt.Errorf(
 			"auto migrate: %w",

@@ -55,6 +55,11 @@ func toDomainUser(user *models.User) *domain.User {
 		status = domain.StatusActive
 	}
 
+	roles := make([]domain.Role, 0, len(user.Roles))
+	for i := range user.Roles {
+		roles = append(roles, toDomainRole(&user.Roles[i]))
+	}
+
 	return &domain.User{
 		ID:           user.ID.String(),
 		Email:        user.Email,
@@ -63,8 +68,21 @@ func toDomainUser(user *models.User) *domain.User {
 		LastName:     user.LastName,
 		Phone:        user.Phone,
 		Status:       status,
+		Roles:        roles,
 		CreatedAt:    user.CreatedAt,
 		UpdatedAt:    user.UpdatedAt,
+	}
+}
+
+func toDomainRole(role *models.Role) domain.Role {
+	if role == nil {
+		return domain.Role{}
+	}
+
+	return domain.Role{
+		ID:          role.ID.String(),
+		Name:        role.Name,
+		Description: role.Description,
 	}
 }
 

@@ -38,6 +38,22 @@ service UserService {
       body: "*"
     };
   }
+
+  rpc ListRoles(ListRolesRequest) returns (ListRolesResponse) {
+    option (google.api.http) = {get: "/api/v1/roles"};
+  }
+
+  rpc GetUserRoles(GetUserRolesRequest) returns (GetUserRolesResponse) {
+    option (google.api.http) = {get: "/api/v1/users/{user_id}/roles"};
+  }
+
+  rpc AssignRole(AssignRoleRequest) returns (AssignRoleResponse) {
+    option (google.api.http) = {put: "/api/v1/users/{user_id}/roles/{role}"};
+  }
+
+  rpc RevokeRole(RevokeRoleRequest) returns (RevokeRoleResponse) {
+    option (google.api.http) = {delete: "/api/v1/users/{user_id}/roles/{role}"};
+  }
 }
 
 // ── Request messages ──────────────────────────────────────────────────────────
@@ -74,6 +90,22 @@ message AuthRequest {
   string password = 2;
 }
 
+message ListRolesRequest {}
+
+message GetUserRolesRequest {
+  string user_id = 1;
+}
+
+message AssignRoleRequest {
+  string user_id = 1;
+  string role = 2;
+}
+
+message RevokeRoleRequest {
+  string user_id = 1;
+  string role = 2;
+}
+
 // ── Response messages ─────────────────────────────────────────────────────────
 
 message User {
@@ -83,6 +115,13 @@ message User {
   string last_name = 4;
   string phone = 5;
   bool is_active = 6;
+  repeated string roles = 7;
+}
+
+message Role {
+  string id = 1;
+  string name = 2;
+  string description = 3;
 }
 
 message ListUsersResponse {
@@ -104,4 +143,20 @@ message AuthResponse {
   User user = 1;
   string access_token = 2;
   string refresh_token = 3;
+}
+
+message ListRolesResponse {
+  repeated Role roles = 1;
+}
+
+message GetUserRolesResponse {
+  repeated Role roles = 1;
+}
+
+message AssignRoleResponse {
+  User user = 1;
+}
+
+message RevokeRoleResponse {
+  User user = 1;
 }

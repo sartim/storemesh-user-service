@@ -22,6 +22,8 @@ type User struct {
 	IsActive bool `json:"is_active" gorm:"column:is_active;not null;default:false"`
 
 	Deleted bool `json:"deleted" gorm:"column:deleted;not null;default:false;index"`
+
+	Roles []Role `json:"roles" gorm:"many2many:user_role;joinForeignKey:UserID;joinReferences:RoleID"`
 }
 
 func (u *User) BeforeCreate(_ *gorm.DB) error {

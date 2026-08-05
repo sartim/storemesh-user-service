@@ -48,6 +48,7 @@ type userResponse struct {
 	LastName  string    `json:"last_name"`
 	Phone     string    `json:"phone"`
 	IsActive  bool      `json:"is_active"`
+	Roles     []string  `json:"roles"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -59,6 +60,11 @@ func toUserResponse(
 		return nil
 	}
 
+	roles := make([]string, 0, len(user.Roles))
+	for _, role := range user.Roles {
+		roles = append(roles, role.Name)
+	}
+
 	return &userResponse{
 		ID:        user.ID,
 		Email:     user.Email,
@@ -66,7 +72,27 @@ func toUserResponse(
 		LastName:  user.LastName,
 		Phone:     user.Phone,
 		IsActive:  user.IsActive(),
+		Roles:     roles,
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
 	}
+}
+
+type roleResponse struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+func toRoleResponses(roles []domain.Role) []roleResponse {
+	responses := make([]roleResponse, 0, len(roles))
+	for _, role := range roles {
+		responses = append(responses, roleResponse{
+			ID:          role.ID,
+			Name:        role.Name,
+			Description: role.Description,
+		})
+	}
+
+	return responses
 }

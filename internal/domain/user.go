@@ -31,6 +31,19 @@ const (
 	TokenTypeRefresh TokenType = "refresh"
 )
 
+const (
+	RoleCustomer = "customer"
+	RoleAdmin    = "admin"
+	RoleSeller   = "seller"
+)
+
+// Role is the framework-independent representation of an authorization role.
+type Role struct {
+	ID          string
+	Name        string
+	Description string
+}
+
 // User is the framework-independent representation used by the service and
 // repository contracts. Persistence and transport layers map their own types
 // to and from this entity.
@@ -42,6 +55,7 @@ type User struct {
 	LastName     string
 	Phone        string
 	Status       UserStatus
+	Roles        []Role
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }
@@ -122,6 +136,9 @@ type UserRepository interface {
 	Update(ctx context.Context, user *User) error
 	Delete(ctx context.Context, id string) error
 	List(ctx context.Context, req ListUsersRequest) ([]*User, int64, error)
+	ListRoles(ctx context.Context) ([]Role, error)
+	AssignRole(ctx context.Context, userID string, roleName string) error
+	RevokeRole(ctx context.Context, userID string, roleName string) error
 }
 
 // AuthSessionStore is the persistence boundary for active authentication
@@ -188,6 +205,27 @@ type UserService interface {
 		ctx context.Context,
 		req ListUsersRequest,
 	) (*ListUsersResponse, error)
+
+	ListRoles(
+		ctx context.Context,
+	) ([]Role, error)
+
+	GetUserRoles(
+		ctx context.Context,
+		userID string,
+	) ([]Role, error)
+
+	AssignRole(
+		ctx context.Context,
+		userID string,
+		roleName string,
+	) (*User, error)
+
+	RevokeRole(
+		ctx context.Context,
+		userID string,
+		roleName string,
+	) (*User, error)
 
 	Authenticate(
 		ctx context.Context,
