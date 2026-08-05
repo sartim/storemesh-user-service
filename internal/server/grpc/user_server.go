@@ -8,11 +8,13 @@ import (
 	"google.golang.org/grpc/status"
 
 	userv1 "storemesh-user-service/gen/user/v1"
+	authcontext "storemesh-user-service/internal/auth"
 	"storemesh-user-service/internal/domain"
 )
 
 type UserGRPCServer struct {
 	userv1.UnimplementedUserServiceServer
+
 	service domain.UserService
 }
 
@@ -49,7 +51,18 @@ func (s *UserGRPCServer) GetUser(
 	ctx context.Context,
 	req *userv1.GetUserRequest,
 ) (*userv1.User, error) {
-	user, err := s.service.GetUser(ctx, req.Id)
+	if err := requireSelfOrRole(
+		ctx,
+		req.Id,
+		"admin",
+	); err != nil {
+		return nil, err
+	}
+
+	user, err := s.service.GetUser(
+		ctx,
+		req.Id,
+	)
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -61,12 +74,21 @@ func (s *UserGRPCServer) ListUsers(
 	ctx context.Context,
 	req *userv1.ListUsersRequest,
 ) (*userv1.ListUsersResponse, error) {
+	if err := requireRole(
+		ctx,
+		"admin",
+	); err != nil {
+		return nil, err
+	}
+
 	result, err := s.service.ListUsers(
 		ctx,
 		domain.ListUsersRequest{
 			Page:    int(req.Page),
 			PerPage: int(req.PerPage),
-			Status:  domain.UserStatus(req.Status),
+			Status: domain.UserStatus(
+				req.Status,
+			),
 		},
 	)
 	if err != nil {
@@ -80,7 +102,10 @@ func (s *UserGRPCServer) ListUsers(
 	)
 
 	for _, user := range result.Users {
-		users = append(users, toProto(user))
+		users = append(
+			users,
+			toProto(user),
+		)
 	}
 
 	return &userv1.ListUsersResponse{
@@ -96,6 +121,14 @@ func (s *UserGRPCServer) DeleteUser(
 	ctx context.Context,
 	req *userv1.DeleteUserRequest,
 ) (*userv1.DeleteUserResponse, error) {
+	if err := requireSelfOrRole(
+		ctx,
+		req.Id,
+		"admin",
+	); err != nil {
+		return nil, err
+	}
+
 	if err := s.service.DeleteUser(
 		ctx,
 		req.Id,
@@ -130,7 +163,64 @@ func (s *UserGRPCServer) Authenticate(
 	}, nil
 }
 
-func toProto(user *domain.User) *userv1.User {
+func requireSelfOrRole(
+	ctx context.Context,
+	requestedUserID string,
+	roles ...string,
+) error {
+	claims, err := authcontext.RequireClaims(ctx)
+	if err != nil {
+		return status.Error(
+			codes.Unauthenticated,
+			"authentication required",
+		)
+	}
+
+	if claims.UserID == requestedUserID {
+		return nil
+	}
+
+	if authcontext.HasAnyRole(
+		claims,
+		roles...,
+	) {
+		return nil
+	}
+
+	return status.Error(
+		codes.PermissionDenied,
+		"forbidden",
+	)
+}
+
+func requireRole(
+	ctx context.Context,
+	roles ...string,
+) error {
+	claims, err := authcontext.RequireClaims(ctx)
+	if err != nil {
+		return status.Error(
+			codes.Unauthenticated,
+			"authentication required",
+		)
+	}
+
+	if authcontext.HasAnyRole(
+		claims,
+		roles...,
+	) {
+		return nil
+	}
+
+	return status.Error(
+		codes.PermissionDenied,
+		"forbidden",
+	)
+}
+
+func toProto(
+	user *domain.User,
+) *userv1.User {
 	if user == nil {
 		return nil
 	}
@@ -145,45 +235,68 @@ func toProto(user *domain.User) *userv1.User {
 	}
 }
 
-func toGRPCError(err error) error {
+func toGRPCError(
+	err error,
+) error {
 	switch {
-	case errors.Is(err, domain.ErrNotFound):
+	case errors.Is(
+		err,
+		domain.ErrNotFound,
+	):
 		return status.Error(
 			codes.NotFound,
 			err.Error(),
 		)
 
-	case errors.Is(err, domain.ErrAlreadyExists):
+	case errors.Is(
+		err,
+		domain.ErrAlreadyExists,
+	):
 		return status.Error(
 			codes.AlreadyExists,
 			err.Error(),
 		)
 
-	case errors.Is(err, domain.ErrInvalidPassword):
+	case errors.Is(
+		err,
+		domain.ErrInvalidPassword,
+	):
 		return status.Error(
 			codes.Unauthenticated,
 			err.Error(),
 		)
 
-	case errors.Is(err, domain.ErrInvalidToken):
+	case errors.Is(
+		err,
+		domain.ErrInvalidToken,
+	):
 		return status.Error(
 			codes.Unauthenticated,
 			err.Error(),
 		)
 
-	case errors.Is(err, domain.ErrUnauthorized):
+	case errors.Is(
+		err,
+		domain.ErrUnauthorized,
+	):
 		return status.Error(
 			codes.Unauthenticated,
 			err.Error(),
 		)
 
-	case errors.Is(err, domain.ErrForbidden):
+	case errors.Is(
+		err,
+		domain.ErrForbidden,
+	):
 		return status.Error(
 			codes.PermissionDenied,
 			err.Error(),
 		)
 
-	case errors.Is(err, domain.ErrInvalidInput):
+	case errors.Is(
+		err,
+		domain.ErrInvalidInput,
+	):
 		return status.Error(
 			codes.InvalidArgument,
 			err.Error(),

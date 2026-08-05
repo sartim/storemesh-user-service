@@ -31,16 +31,25 @@ import (
 	"storemesh-user-service/internal/config"
 	"storemesh-user-service/internal/domain"
 	"storemesh-user-service/internal/helpers/env"
-	"storemesh-user-service/internal/middleware"
+	grpcmiddleware "storemesh-user-service/internal/middleware"
 	"storemesh-user-service/internal/repository"
 	postgres "storemesh-user-service/internal/repository/postgres"
 	redisrepository "storemesh-user-service/internal/repository/redis"
 	grpcserver "storemesh-user-service/internal/server/grpc"
 	"storemesh-user-service/internal/server/http/handler"
+	httpmiddleware "storemesh-user-service/internal/server/http/middleware"
 	"storemesh-user-service/internal/service"
 )
 
-const grpcUserServiceName = "user.v1.UserService"
+const (
+	grpcUserServiceName = "user.v1.UserService"
+
+	grpcCreateUserMethod = "/user.v1.UserService/CreateUser"
+
+	grpcAuthenticateMethod = "/user.v1.UserService/Authenticate"
+
+	grpcHealthCheckMethod = "/grpc.health.v1.Health/Check"
+)
 
 func main() {
 	if _, err := os.Stat(".env"); err == nil {
@@ -301,11 +310,21 @@ func buildGRPCServer(
 	log *zap.Logger,
 ) (*grpc.Server, *health.Server) {
 	server := grpc.NewServer(
-		middleware.TracingStatsHandler(),
+		grpc.StatsHandler(
+			grpcmiddleware.TracingStatsHandler(),
+		),
 
 		grpc.ChainUnaryInterceptor(
-			middleware.Recovery(log),
-			middleware.Logging(log),
+			grpcmiddleware.Recovery(log),
+
+			grpcmiddleware.Authentication(
+				userService,
+				grpcCreateUserMethod,
+				grpcAuthenticateMethod,
+				grpcHealthCheckMethod,
+			),
+
+			grpcmiddleware.Logging(log),
 		),
 	)
 
@@ -347,16 +366,15 @@ func buildHTTPServer(
 	router := gin.New()
 
 	router.Use(
-		middleware.RequestID(),
-		gin.Recovery(),
-		middleware.CORS(),
+		httpmiddleware.RequestID(),
+		httpmiddleware.Recovery(log),
+		httpmiddleware.Logger(log),
+		httpmiddleware.CORS(),
 	)
 
 	router.GET(
 		"/healthz",
-		func(
-			c *gin.Context,
-		) {
+		func(c *gin.Context) {
 			c.JSON(
 				http.StatusOK,
 				gin.H{
@@ -368,9 +386,7 @@ func buildHTTPServer(
 
 	router.GET(
 		"/readyz",
-		func(
-			c *gin.Context,
-		) {
+		func(c *gin.Context) {
 			c.JSON(
 				http.StatusOK,
 				gin.H{
