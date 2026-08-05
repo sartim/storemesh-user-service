@@ -23,7 +23,7 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/v1AuthResponse"
+              "$ref": "#/definitions/v1AuthenticateResponse"
             }
           },
           "default": {
@@ -39,7 +39,7 @@
             "in": "body",
             "required": true,
             "schema": {
-              "$ref": "#/definitions/v1AuthRequest"
+              "$ref": "#/definitions/v1AuthenticateRequest"
             }
           }
         ],
@@ -120,7 +120,7 @@
         "operationId": "UserService_CreateUser",
         "responses": {
           "200": {
-            "description": "A successful response.",
+            "description": "",
             "schema": {
               "$ref": "#/definitions/v1User"
             }
@@ -152,7 +152,7 @@
         "operationId": "UserService_GetUser",
         "responses": {
           "200": {
-            "description": "A successful response.",
+            "description": "",
             "schema": {
               "$ref": "#/definitions/v1User"
             }
@@ -343,7 +343,7 @@
         }
       }
     },
-    "v1AuthRequest": {
+    "v1AuthenticateRequest": {
       "type": "object",
       "properties": {
         "email": {
@@ -354,7 +354,7 @@
         }
       }
     },
-    "v1AuthResponse": {
+    "v1AuthenticateResponse": {
       "type": "object",
       "properties": {
         "user": {
@@ -388,6 +388,14 @@
         }
       }
     },
+    "v1CreateUserResponse": {
+      "type": "object",
+      "properties": {
+        "user": {
+          "$ref": "#/definitions/v1User"
+        }
+      }
+    },
     "v1DeleteUserResponse": {
       "type": "object",
       "properties": {
@@ -396,6 +404,14 @@
         }
       },
       "description": "DeleteUserResponse carries a success flag rather than returning the\ndeleted User — the record is soft-deleted so returning it would be\nmisleading (is_active would be false, deleted=true)."
+    },
+    "v1GetUserResponse": {
+      "type": "object",
+      "properties": {
+        "user": {
+          "$ref": "#/definitions/v1User"
+        }
+      }
     },
     "v1GetUserRolesResponse": {
       "type": "object",

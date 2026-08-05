@@ -29,7 +29,7 @@ func NewUserGRPCServer(
 func (s *UserGRPCServer) CreateUser(
 	ctx context.Context,
 	req *userv1.CreateUserRequest,
-) (*userv1.User, error) {
+) (*userv1.CreateUserResponse, error) {
 	user, err := s.service.CreateUser(
 		ctx,
 		domain.CreateUserRequest{
@@ -44,13 +44,15 @@ func (s *UserGRPCServer) CreateUser(
 		return nil, toGRPCError(err)
 	}
 
-	return toProto(user), nil
+	return &userv1.CreateUserResponse{
+		User: toProto(user),
+	}, nil
 }
 
 func (s *UserGRPCServer) GetUser(
 	ctx context.Context,
 	req *userv1.GetUserRequest,
-) (*userv1.User, error) {
+) (*userv1.GetUserResponse, error) {
 	if err := requireSelfOrRole(
 		ctx,
 		req.Id,
@@ -67,7 +69,9 @@ func (s *UserGRPCServer) GetUser(
 		return nil, toGRPCError(err)
 	}
 
-	return toProto(user), nil
+	return &userv1.GetUserResponse{
+		User: toProto(user),
+	}, nil
 }
 
 func (s *UserGRPCServer) ListUsers(
@@ -143,8 +147,8 @@ func (s *UserGRPCServer) DeleteUser(
 
 func (s *UserGRPCServer) Authenticate(
 	ctx context.Context,
-	req *userv1.AuthRequest,
-) (*userv1.AuthResponse, error) {
+	req *userv1.AuthenticateRequest,
+) (*userv1.AuthenticateResponse, error) {
 	user, tokens, err := s.service.Authenticate(
 		ctx,
 		domain.AuthRequest{
@@ -156,7 +160,7 @@ func (s *UserGRPCServer) Authenticate(
 		return nil, toGRPCError(err)
 	}
 
-	return &userv1.AuthResponse{
+	return &userv1.AuthenticateResponse{
 		User:         toProto(user),
 		AccessToken:  tokens.AccessToken,
 		RefreshToken: tokens.RefreshToken,
