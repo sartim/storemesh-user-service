@@ -43,6 +43,21 @@ service UserService {
     };
   }
 
+  rpc RefreshToken(RefreshTokenRequest) returns (RefreshTokenResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/auth/refresh"
+      body: "*"
+    };
+  }
+
+  rpc Logout(LogoutRequest) returns (LogoutResponse) {
+    option (google.api.http) = {post: "/api/v1/auth/logout"};
+  }
+
+  rpc LogoutAll(LogoutAllRequest) returns (LogoutAllResponse) {
+    option (google.api.http) = {post: "/api/v1/auth/logout-all"};
+  }
+
   rpc ListRoles(ListRolesRequest) returns (ListRolesResponse) {
     option (google.api.http) = {get: "/api/v1/roles"};
   }
@@ -171,4 +186,26 @@ message CreateUserResponse {
 
 message GetUserResponse {
   User user = 1;
+}
+
+message RefreshTokenRequest {
+  string refresh_token = 1;
+}
+
+message LogoutRequest {}
+
+message LogoutAllRequest {}
+
+message RefreshTokenResponse {
+  string access_token = 1;
+  string refresh_token = 2;
+  string token_type = 3;
+}
+
+message LogoutResponse {
+  bool success = 1;
+}
+
+message LogoutAllResponse {
+  bool success = 1;
 }

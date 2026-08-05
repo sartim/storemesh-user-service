@@ -24,6 +24,9 @@ const (
 	UserService_ListUsers_FullMethodName    = "/user.v1.UserService/ListUsers"
 	UserService_DeleteUser_FullMethodName   = "/user.v1.UserService/DeleteUser"
 	UserService_Authenticate_FullMethodName = "/user.v1.UserService/Authenticate"
+	UserService_RefreshToken_FullMethodName = "/user.v1.UserService/RefreshToken"
+	UserService_Logout_FullMethodName       = "/user.v1.UserService/Logout"
+	UserService_LogoutAll_FullMethodName    = "/user.v1.UserService/LogoutAll"
 	UserService_ListRoles_FullMethodName    = "/user.v1.UserService/ListRoles"
 	UserService_GetUserRoles_FullMethodName = "/user.v1.UserService/GetUserRoles"
 	UserService_AssignRole_FullMethodName   = "/user.v1.UserService/AssignRole"
@@ -39,6 +42,9 @@ type UserServiceClient interface {
 	ListUsers(ctx context.Context, in *ListUsersRequest, opts ...grpc.CallOption) (*ListUsersResponse, error)
 	DeleteUser(ctx context.Context, in *DeleteUserRequest, opts ...grpc.CallOption) (*DeleteUserResponse, error)
 	Authenticate(ctx context.Context, in *AuthenticateRequest, opts ...grpc.CallOption) (*AuthenticateResponse, error)
+	RefreshToken(ctx context.Context, in *RefreshTokenRequest, opts ...grpc.CallOption) (*RefreshTokenResponse, error)
+	Logout(ctx context.Context, in *LogoutRequest, opts ...grpc.CallOption) (*LogoutResponse, error)
+	LogoutAll(ctx context.Context, in *LogoutAllRequest, opts ...grpc.CallOption) (*LogoutAllResponse, error)
 	ListRoles(ctx context.Context, in *ListRolesRequest, opts ...grpc.CallOption) (*ListRolesResponse, error)
 	GetUserRoles(ctx context.Context, in *GetUserRolesRequest, opts ...grpc.CallOption) (*GetUserRolesResponse, error)
 	AssignRole(ctx context.Context, in *AssignRoleRequest, opts ...grpc.CallOption) (*AssignRoleResponse, error)
@@ -103,6 +109,36 @@ func (c *userServiceClient) Authenticate(ctx context.Context, in *AuthenticateRe
 	return out, nil
 }
 
+func (c *userServiceClient) RefreshToken(ctx context.Context, in *RefreshTokenRequest, opts ...grpc.CallOption) (*RefreshTokenResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RefreshTokenResponse)
+	err := c.cc.Invoke(ctx, UserService_RefreshToken_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *userServiceClient) Logout(ctx context.Context, in *LogoutRequest, opts ...grpc.CallOption) (*LogoutResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(LogoutResponse)
+	err := c.cc.Invoke(ctx, UserService_Logout_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *userServiceClient) LogoutAll(ctx context.Context, in *LogoutAllRequest, opts ...grpc.CallOption) (*LogoutAllResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(LogoutAllResponse)
+	err := c.cc.Invoke(ctx, UserService_LogoutAll_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *userServiceClient) ListRoles(ctx context.Context, in *ListRolesRequest, opts ...grpc.CallOption) (*ListRolesResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListRolesResponse)
@@ -152,6 +188,9 @@ type UserServiceServer interface {
 	ListUsers(context.Context, *ListUsersRequest) (*ListUsersResponse, error)
 	DeleteUser(context.Context, *DeleteUserRequest) (*DeleteUserResponse, error)
 	Authenticate(context.Context, *AuthenticateRequest) (*AuthenticateResponse, error)
+	RefreshToken(context.Context, *RefreshTokenRequest) (*RefreshTokenResponse, error)
+	Logout(context.Context, *LogoutRequest) (*LogoutResponse, error)
+	LogoutAll(context.Context, *LogoutAllRequest) (*LogoutAllResponse, error)
 	ListRoles(context.Context, *ListRolesRequest) (*ListRolesResponse, error)
 	GetUserRoles(context.Context, *GetUserRolesRequest) (*GetUserRolesResponse, error)
 	AssignRole(context.Context, *AssignRoleRequest) (*AssignRoleResponse, error)
@@ -180,6 +219,15 @@ func (UnimplementedUserServiceServer) DeleteUser(context.Context, *DeleteUserReq
 }
 func (UnimplementedUserServiceServer) Authenticate(context.Context, *AuthenticateRequest) (*AuthenticateResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Authenticate not implemented")
+}
+func (UnimplementedUserServiceServer) RefreshToken(context.Context, *RefreshTokenRequest) (*RefreshTokenResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RefreshToken not implemented")
+}
+func (UnimplementedUserServiceServer) Logout(context.Context, *LogoutRequest) (*LogoutResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Logout not implemented")
+}
+func (UnimplementedUserServiceServer) LogoutAll(context.Context, *LogoutAllRequest) (*LogoutAllResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method LogoutAll not implemented")
 }
 func (UnimplementedUserServiceServer) ListRoles(context.Context, *ListRolesRequest) (*ListRolesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListRoles not implemented")
@@ -304,6 +352,60 @@ func _UserService_Authenticate_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _UserService_RefreshToken_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RefreshTokenRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserServiceServer).RefreshToken(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserService_RefreshToken_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserServiceServer).RefreshToken(ctx, req.(*RefreshTokenRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _UserService_Logout_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LogoutRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserServiceServer).Logout(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserService_Logout_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserServiceServer).Logout(ctx, req.(*LogoutRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _UserService_LogoutAll_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LogoutAllRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserServiceServer).LogoutAll(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserService_LogoutAll_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserServiceServer).LogoutAll(ctx, req.(*LogoutAllRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _UserService_ListRoles_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListRolesRequest)
 	if err := dec(in); err != nil {
@@ -402,6 +504,18 @@ var UserService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Authenticate",
 			Handler:    _UserService_Authenticate_Handler,
+		},
+		{
+			MethodName: "RefreshToken",
+			Handler:    _UserService_RefreshToken_Handler,
+		},
+		{
+			MethodName: "Logout",
+			Handler:    _UserService_Logout_Handler,
+		},
+		{
+			MethodName: "LogoutAll",
+			Handler:    _UserService_LogoutAll_Handler,
 		},
 		{
 			MethodName: "ListRoles",
