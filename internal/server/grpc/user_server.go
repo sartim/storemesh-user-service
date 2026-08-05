@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	userv1 "storemesh-user-service/gen/user/v1"
@@ -167,6 +168,54 @@ func (s *UserGRPCServer) Authenticate(
 	}, nil
 }
 
+func (s *UserGRPCServer) RefreshToken(
+	ctx context.Context,
+	req *userv1.RefreshTokenRequest,
+) (*userv1.RefreshTokenResponse, error) {
+	pair, err := s.service.RefreshToken(ctx, req.RefreshToken)
+	if err != nil {
+		return nil, toGRPCError(err)
+	}
+
+	return &userv1.RefreshTokenResponse{
+		AccessToken:  pair.AccessToken,
+		RefreshToken: pair.RefreshToken,
+		TokenType:    "Bearer",
+	}, nil
+}
+
+func (s *UserGRPCServer) Logout(
+	ctx context.Context,
+	_ *userv1.LogoutRequest,
+) (*userv1.LogoutResponse, error) {
+	token, err := accessTokenFromMetadata(ctx)
+	if err != nil {
+		return nil, toGRPCError(err)
+	}
+
+	if err := s.service.Logout(ctx, token); err != nil {
+		return nil, toGRPCError(err)
+	}
+
+	return &userv1.LogoutResponse{Success: true}, nil
+}
+
+func (s *UserGRPCServer) LogoutAll(
+	ctx context.Context,
+	_ *userv1.LogoutAllRequest,
+) (*userv1.LogoutAllResponse, error) {
+	token, err := accessTokenFromMetadata(ctx)
+	if err != nil {
+		return nil, toGRPCError(err)
+	}
+
+	if err := s.service.LogoutAll(ctx, token); err != nil {
+		return nil, toGRPCError(err)
+	}
+
+	return &userv1.LogoutAllResponse{Success: true}, nil
+}
+
 func (s *UserGRPCServer) ListRoles(
 	ctx context.Context,
 	_ *userv1.ListRolesRequest,
@@ -259,6 +308,20 @@ func requireSelfOrRole(
 		codes.PermissionDenied,
 		"forbidden",
 	)
+}
+
+func accessTokenFromMetadata(ctx context.Context) (string, error) {
+	requestMetadata, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return "", domain.ErrUnauthorized
+	}
+
+	authorizationValues := requestMetadata.Get("authorization")
+	if len(authorizationValues) == 0 {
+		return "", domain.ErrUnauthorized
+	}
+
+	return authcontext.ParseBearerToken(authorizationValues[0])
 }
 
 func requireRole(

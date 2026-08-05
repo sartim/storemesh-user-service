@@ -1086,6 +1086,270 @@ func (x *GetUserResponse) GetUser() *User {
 	return nil
 }
 
+type RefreshTokenRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RefreshToken  string                 `protobuf:"bytes,1,opt,name=refresh_token,json=refreshToken,proto3" json:"refresh_token,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RefreshTokenRequest) Reset() {
+	*x = RefreshTokenRequest{}
+	mi := &file_user_v1_user_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RefreshTokenRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RefreshTokenRequest) ProtoMessage() {}
+
+func (x *RefreshTokenRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_user_v1_user_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RefreshTokenRequest.ProtoReflect.Descriptor instead.
+func (*RefreshTokenRequest) Descriptor() ([]byte, []int) {
+	return file_user_v1_user_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *RefreshTokenRequest) GetRefreshToken() string {
+	if x != nil {
+		return x.RefreshToken
+	}
+	return ""
+}
+
+type LogoutRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LogoutRequest) Reset() {
+	*x = LogoutRequest{}
+	mi := &file_user_v1_user_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LogoutRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LogoutRequest) ProtoMessage() {}
+
+func (x *LogoutRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_user_v1_user_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LogoutRequest.ProtoReflect.Descriptor instead.
+func (*LogoutRequest) Descriptor() ([]byte, []int) {
+	return file_user_v1_user_proto_rawDescGZIP(), []int{21}
+}
+
+type LogoutAllRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LogoutAllRequest) Reset() {
+	*x = LogoutAllRequest{}
+	mi := &file_user_v1_user_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LogoutAllRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LogoutAllRequest) ProtoMessage() {}
+
+func (x *LogoutAllRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_user_v1_user_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LogoutAllRequest.ProtoReflect.Descriptor instead.
+func (*LogoutAllRequest) Descriptor() ([]byte, []int) {
+	return file_user_v1_user_proto_rawDescGZIP(), []int{22}
+}
+
+type RefreshTokenResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AccessToken   string                 `protobuf:"bytes,1,opt,name=access_token,json=accessToken,proto3" json:"access_token,omitempty"`
+	RefreshToken  string                 `protobuf:"bytes,2,opt,name=refresh_token,json=refreshToken,proto3" json:"refresh_token,omitempty"`
+	TokenType     string                 `protobuf:"bytes,3,opt,name=token_type,json=tokenType,proto3" json:"token_type,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RefreshTokenResponse) Reset() {
+	*x = RefreshTokenResponse{}
+	mi := &file_user_v1_user_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RefreshTokenResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RefreshTokenResponse) ProtoMessage() {}
+
+func (x *RefreshTokenResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_user_v1_user_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RefreshTokenResponse.ProtoReflect.Descriptor instead.
+func (*RefreshTokenResponse) Descriptor() ([]byte, []int) {
+	return file_user_v1_user_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *RefreshTokenResponse) GetAccessToken() string {
+	if x != nil {
+		return x.AccessToken
+	}
+	return ""
+}
+
+func (x *RefreshTokenResponse) GetRefreshToken() string {
+	if x != nil {
+		return x.RefreshToken
+	}
+	return ""
+}
+
+func (x *RefreshTokenResponse) GetTokenType() string {
+	if x != nil {
+		return x.TokenType
+	}
+	return ""
+}
+
+type LogoutResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LogoutResponse) Reset() {
+	*x = LogoutResponse{}
+	mi := &file_user_v1_user_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LogoutResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LogoutResponse) ProtoMessage() {}
+
+func (x *LogoutResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_user_v1_user_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LogoutResponse.ProtoReflect.Descriptor instead.
+func (*LogoutResponse) Descriptor() ([]byte, []int) {
+	return file_user_v1_user_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *LogoutResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+type LogoutAllResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LogoutAllResponse) Reset() {
+	*x = LogoutAllResponse{}
+	mi := &file_user_v1_user_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LogoutAllResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LogoutAllResponse) ProtoMessage() {}
+
+func (x *LogoutAllResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_user_v1_user_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LogoutAllResponse.ProtoReflect.Descriptor instead.
+func (*LogoutAllResponse) Descriptor() ([]byte, []int) {
+	return file_user_v1_user_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *LogoutAllResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
 var File_user_v1_user_proto protoreflect.FileDescriptor
 
 const file_user_v1_user_proto_rawDesc = "" +
@@ -1156,7 +1420,20 @@ const file_user_v1_user_proto_rawDesc = "" +
 	"\x12CreateUserResponse\x12!\n" +
 	"\x04user\x18\x01 \x01(\v2\r.user.v1.UserR\x04user\"4\n" +
 	"\x0fGetUserResponse\x12!\n" +
-	"\x04user\x18\x01 \x01(\v2\r.user.v1.UserR\x04user2\xb7\a\n" +
+	"\x04user\x18\x01 \x01(\v2\r.user.v1.UserR\x04user\":\n" +
+	"\x13RefreshTokenRequest\x12#\n" +
+	"\rrefresh_token\x18\x01 \x01(\tR\frefreshToken\"\x0f\n" +
+	"\rLogoutRequest\"\x12\n" +
+	"\x10LogoutAllRequest\"}\n" +
+	"\x14RefreshTokenResponse\x12!\n" +
+	"\faccess_token\x18\x01 \x01(\tR\vaccessToken\x12#\n" +
+	"\rrefresh_token\x18\x02 \x01(\tR\frefreshToken\x12\x1d\n" +
+	"\n" +
+	"token_type\x18\x03 \x01(\tR\ttokenType\"*\n" +
+	"\x0eLogoutResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\"-\n" +
+	"\x11LogoutAllResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess2\xe2\t\n" +
 	"\vUserService\x12e\n" +
 	"\n" +
 	"CreateUser\x12\x1a.user.v1.CreateUserRequest\x1a\x1b.user.v1.CreateUserResponse\"\x1e\x82\xd3\xe4\x93\x02\x18:\x01*b\x04user\"\r/api/v1/users\x12^\n" +
@@ -1164,7 +1441,10 @@ const file_user_v1_user_proto_rawDesc = "" +
 	"\tListUsers\x12\x19.user.v1.ListUsersRequest\x1a\x1a.user.v1.ListUsersResponse\"\x15\x82\xd3\xe4\x93\x02\x0f\x12\r/api/v1/users\x12a\n" +
 	"\n" +
 	"DeleteUser\x12\x1a.user.v1.DeleteUserRequest\x1a\x1b.user.v1.DeleteUserResponse\"\x1a\x82\xd3\xe4\x93\x02\x14*\x12/api/v1/users/{id}\x12j\n" +
-	"\fAuthenticate\x12\x1c.user.v1.AuthenticateRequest\x1a\x1d.user.v1.AuthenticateResponse\"\x1d\x82\xd3\xe4\x93\x02\x17:\x01*\"\x12/api/v1/auth/login\x12Y\n" +
+	"\fAuthenticate\x12\x1c.user.v1.AuthenticateRequest\x1a\x1d.user.v1.AuthenticateResponse\"\x1d\x82\xd3\xe4\x93\x02\x17:\x01*\"\x12/api/v1/auth/login\x12l\n" +
+	"\fRefreshToken\x12\x1c.user.v1.RefreshTokenRequest\x1a\x1d.user.v1.RefreshTokenResponse\"\x1f\x82\xd3\xe4\x93\x02\x19:\x01*\"\x14/api/v1/auth/refresh\x12V\n" +
+	"\x06Logout\x12\x16.user.v1.LogoutRequest\x1a\x17.user.v1.LogoutResponse\"\x1b\x82\xd3\xe4\x93\x02\x15\"\x13/api/v1/auth/logout\x12c\n" +
+	"\tLogoutAll\x12\x19.user.v1.LogoutAllRequest\x1a\x1a.user.v1.LogoutAllResponse\"\x1f\x82\xd3\xe4\x93\x02\x19\"\x17/api/v1/auth/logout-all\x12Y\n" +
 	"\tListRoles\x12\x19.user.v1.ListRolesRequest\x1a\x1a.user.v1.ListRolesResponse\"\x15\x82\xd3\xe4\x93\x02\x0f\x12\r/api/v1/roles\x12r\n" +
 	"\fGetUserRoles\x12\x1c.user.v1.GetUserRolesRequest\x1a\x1d.user.v1.GetUserRolesResponse\"%\x82\xd3\xe4\x93\x02\x1f\x12\x1d/api/v1/users/{user_id}/roles\x12s\n" +
 	"\n" +
@@ -1185,7 +1465,7 @@ func file_user_v1_user_proto_rawDescGZIP() []byte {
 	return file_user_v1_user_proto_rawDescData
 }
 
-var file_user_v1_user_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
+var file_user_v1_user_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
 var file_user_v1_user_proto_goTypes = []any{
 	(*CreateUserRequest)(nil),    // 0: user.v1.CreateUserRequest
 	(*GetUserRequest)(nil),       // 1: user.v1.GetUserRequest
@@ -1207,6 +1487,12 @@ var file_user_v1_user_proto_goTypes = []any{
 	(*RevokeRoleResponse)(nil),   // 17: user.v1.RevokeRoleResponse
 	(*CreateUserResponse)(nil),   // 18: user.v1.CreateUserResponse
 	(*GetUserResponse)(nil),      // 19: user.v1.GetUserResponse
+	(*RefreshTokenRequest)(nil),  // 20: user.v1.RefreshTokenRequest
+	(*LogoutRequest)(nil),        // 21: user.v1.LogoutRequest
+	(*LogoutAllRequest)(nil),     // 22: user.v1.LogoutAllRequest
+	(*RefreshTokenResponse)(nil), // 23: user.v1.RefreshTokenResponse
+	(*LogoutResponse)(nil),       // 24: user.v1.LogoutResponse
+	(*LogoutAllResponse)(nil),    // 25: user.v1.LogoutAllResponse
 }
 var file_user_v1_user_proto_depIdxs = []int32{
 	9,  // 0: user.v1.ListUsersResponse.users:type_name -> user.v1.User
@@ -1222,21 +1508,27 @@ var file_user_v1_user_proto_depIdxs = []int32{
 	2,  // 10: user.v1.UserService.ListUsers:input_type -> user.v1.ListUsersRequest
 	3,  // 11: user.v1.UserService.DeleteUser:input_type -> user.v1.DeleteUserRequest
 	4,  // 12: user.v1.UserService.Authenticate:input_type -> user.v1.AuthenticateRequest
-	5,  // 13: user.v1.UserService.ListRoles:input_type -> user.v1.ListRolesRequest
-	6,  // 14: user.v1.UserService.GetUserRoles:input_type -> user.v1.GetUserRolesRequest
-	7,  // 15: user.v1.UserService.AssignRole:input_type -> user.v1.AssignRoleRequest
-	8,  // 16: user.v1.UserService.RevokeRole:input_type -> user.v1.RevokeRoleRequest
-	18, // 17: user.v1.UserService.CreateUser:output_type -> user.v1.CreateUserResponse
-	19, // 18: user.v1.UserService.GetUser:output_type -> user.v1.GetUserResponse
-	11, // 19: user.v1.UserService.ListUsers:output_type -> user.v1.ListUsersResponse
-	12, // 20: user.v1.UserService.DeleteUser:output_type -> user.v1.DeleteUserResponse
-	13, // 21: user.v1.UserService.Authenticate:output_type -> user.v1.AuthenticateResponse
-	14, // 22: user.v1.UserService.ListRoles:output_type -> user.v1.ListRolesResponse
-	15, // 23: user.v1.UserService.GetUserRoles:output_type -> user.v1.GetUserRolesResponse
-	16, // 24: user.v1.UserService.AssignRole:output_type -> user.v1.AssignRoleResponse
-	17, // 25: user.v1.UserService.RevokeRole:output_type -> user.v1.RevokeRoleResponse
-	17, // [17:26] is the sub-list for method output_type
-	8,  // [8:17] is the sub-list for method input_type
+	20, // 13: user.v1.UserService.RefreshToken:input_type -> user.v1.RefreshTokenRequest
+	21, // 14: user.v1.UserService.Logout:input_type -> user.v1.LogoutRequest
+	22, // 15: user.v1.UserService.LogoutAll:input_type -> user.v1.LogoutAllRequest
+	5,  // 16: user.v1.UserService.ListRoles:input_type -> user.v1.ListRolesRequest
+	6,  // 17: user.v1.UserService.GetUserRoles:input_type -> user.v1.GetUserRolesRequest
+	7,  // 18: user.v1.UserService.AssignRole:input_type -> user.v1.AssignRoleRequest
+	8,  // 19: user.v1.UserService.RevokeRole:input_type -> user.v1.RevokeRoleRequest
+	18, // 20: user.v1.UserService.CreateUser:output_type -> user.v1.CreateUserResponse
+	19, // 21: user.v1.UserService.GetUser:output_type -> user.v1.GetUserResponse
+	11, // 22: user.v1.UserService.ListUsers:output_type -> user.v1.ListUsersResponse
+	12, // 23: user.v1.UserService.DeleteUser:output_type -> user.v1.DeleteUserResponse
+	13, // 24: user.v1.UserService.Authenticate:output_type -> user.v1.AuthenticateResponse
+	23, // 25: user.v1.UserService.RefreshToken:output_type -> user.v1.RefreshTokenResponse
+	24, // 26: user.v1.UserService.Logout:output_type -> user.v1.LogoutResponse
+	25, // 27: user.v1.UserService.LogoutAll:output_type -> user.v1.LogoutAllResponse
+	14, // 28: user.v1.UserService.ListRoles:output_type -> user.v1.ListRolesResponse
+	15, // 29: user.v1.UserService.GetUserRoles:output_type -> user.v1.GetUserRolesResponse
+	16, // 30: user.v1.UserService.AssignRole:output_type -> user.v1.AssignRoleResponse
+	17, // 31: user.v1.UserService.RevokeRole:output_type -> user.v1.RevokeRoleResponse
+	20, // [20:32] is the sub-list for method output_type
+	8,  // [8:20] is the sub-list for method input_type
 	8,  // [8:8] is the sub-list for extension type_name
 	8,  // [8:8] is the sub-list for extension extendee
 	0,  // [0:8] is the sub-list for field type_name
@@ -1253,7 +1545,7 @@ func file_user_v1_user_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_user_v1_user_proto_rawDesc), len(file_user_v1_user_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   20,
+			NumMessages:   26,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

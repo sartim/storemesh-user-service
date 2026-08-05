@@ -44,6 +44,12 @@ func (h *UserHandler) RegisterRoutes(
 	)
 
 	protectedUsers.GET(
+		"",
+		httpmiddleware.RequireRole(domain.RoleAdmin),
+		h.ListUsers,
+	)
+
+	protectedUsers.GET(
 		"/:id",
 		httpmiddleware.RequireSelfOrRole(
 			"id",

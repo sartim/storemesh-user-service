@@ -12,12 +12,7 @@ func (h *UserHandler) GetUser(c *gin.Context) {
 		c.Param("id"),
 	)
 	if err != nil {
-		c.JSON(
-			http.StatusNotFound,
-			gin.H{
-				"error": err.Error(),
-			},
-		)
+		h.writeError(c, err)
 		return
 	}
 
@@ -27,16 +22,31 @@ func (h *UserHandler) GetUser(c *gin.Context) {
 	)
 }
 
+func (h *UserHandler) ListUsers(c *gin.Context) {
+	var query listUsersQuery
+
+	if err := c.ShouldBindQuery(&query); err != nil {
+		writeInvalidRequest(c)
+		return
+	}
+
+	result, err := h.service.ListUsers(
+		c.Request.Context(),
+		query.toDomain(),
+	)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, toListUsersResponse(result))
+}
+
 func (h *UserHandler) CreateUser(c *gin.Context) {
 	var request createUserRequest
 
 	if err := c.ShouldBindJSON(&request); err != nil {
-		c.JSON(
-			http.StatusBadRequest,
-			gin.H{
-				"error": err.Error(),
-			},
-		)
+		writeInvalidRequest(c)
 		return
 	}
 
@@ -45,12 +55,7 @@ func (h *UserHandler) CreateUser(c *gin.Context) {
 		request.toDomain(),
 	)
 	if err != nil {
-		c.JSON(
-			http.StatusBadRequest,
-			gin.H{
-				"error": err.Error(),
-			},
-		)
+		h.writeError(c, err)
 		return
 	}
 
@@ -64,12 +69,7 @@ func (h *UserHandler) UpdateUser(c *gin.Context) {
 	var request updateUserRequest
 
 	if err := c.ShouldBindJSON(&request); err != nil {
-		c.JSON(
-			http.StatusBadRequest,
-			gin.H{
-				"error": err.Error(),
-			},
-		)
+		writeInvalidRequest(c)
 		return
 	}
 
@@ -78,12 +78,7 @@ func (h *UserHandler) UpdateUser(c *gin.Context) {
 		request.toDomain(c.Param("id")),
 	)
 	if err != nil {
-		c.JSON(
-			http.StatusBadRequest,
-			gin.H{
-				"error": err.Error(),
-			},
-		)
+		h.writeError(c, err)
 		return
 	}
 
@@ -98,12 +93,7 @@ func (h *UserHandler) DeleteUser(c *gin.Context) {
 		c.Request.Context(),
 		c.Param("id"),
 	); err != nil {
-		c.JSON(
-			http.StatusBadRequest,
-			gin.H{
-				"error": err.Error(),
-			},
-		)
+		h.writeError(c, err)
 		return
 	}
 

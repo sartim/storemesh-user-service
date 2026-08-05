@@ -48,6 +48,8 @@ const (
 
 	grpcAuthenticateMethod = "/user.v1.UserService/Authenticate"
 
+	grpcRefreshTokenMethod = "/user.v1.UserService/RefreshToken"
+
 	grpcHealthCheckMethod = "/grpc.health.v1.Health/Check"
 )
 
@@ -321,6 +323,7 @@ func buildGRPCServer(
 				userService,
 				grpcCreateUserMethod,
 				grpcAuthenticateMethod,
+				grpcRefreshTokenMethod,
 				grpcHealthCheckMethod,
 			),
 

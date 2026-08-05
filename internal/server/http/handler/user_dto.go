@@ -30,6 +30,20 @@ type updateUserRequest struct {
 	Phone     string `json:"phone"`
 }
 
+type listUsersQuery struct {
+	Status  string `form:"status"`
+	Page    int    `form:"page"`
+	PerPage int    `form:"per_page"`
+}
+
+func (q listUsersQuery) toDomain() domain.ListUsersRequest {
+	return domain.ListUsersRequest{
+		Status:  domain.UserStatus(q.Status),
+		Page:    q.Page,
+		PerPage: q.PerPage,
+	}
+}
+
 func (r updateUserRequest) toDomain(
 	id string,
 ) domain.UpdateUserRequest {
@@ -82,6 +96,33 @@ type roleResponse struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
+}
+
+type listUsersResponse struct {
+	Users      []*userResponse `json:"users"`
+	TotalItems int64           `json:"total_items"`
+	TotalPages int             `json:"total_pages"`
+	Page       int             `json:"page"`
+	PerPage    int             `json:"per_page"`
+}
+
+func toListUsersResponse(result *domain.ListUsersResponse) *listUsersResponse {
+	if result == nil {
+		return nil
+	}
+
+	users := make([]*userResponse, 0, len(result.Users))
+	for _, user := range result.Users {
+		users = append(users, toUserResponse(user))
+	}
+
+	return &listUsersResponse{
+		Users:      users,
+		TotalItems: result.TotalItems,
+		TotalPages: result.TotalPages,
+		Page:       result.Page,
+		PerPage:    result.PerPage,
+	}
 }
 
 func toRoleResponses(roles []domain.Role) []roleResponse {
