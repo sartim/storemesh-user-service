@@ -53,6 +53,7 @@ const (
 
 	grpcAuthenticateMethod = "/user.v1.UserService/Authenticate"
 
+	// #nosec G101 -- this is a gRPC method path, not a credential.
 	grpcRefreshTokenMethod = "/user.v1.UserService/RefreshToken"
 
 	grpcHealthCheckMethod = "/grpc.health.v1.Health/Check"

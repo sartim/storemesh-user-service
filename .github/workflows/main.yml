@@ -1,0 +1,329 @@
+name: main
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: storemesh-user-service
+  REGISTRY: ghcr.io/${{ github.repository_owner }}
+
+jobs:
+  test:
+    name: Test and verify
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Check formatting
+        run: |
+          UNFORMATTED_FILES="$(gofmt -l .)"
+
+          if [ -n "${UNFORMATTED_FILES}" ]; then
+            echo "The following files require gofmt:"
+            echo "${UNFORMATTED_FILES}"
+            exit 1
+          fi
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Run tests
+        run: |
+          go test ./... \
+            -v \
+            -race \
+            -coverprofile=coverage.out \
+            -covermode=atomic \
+            -timeout=120s
+
+      - name: Coverage report
+        run: go tool cover -func=coverage.out
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.out
+          if-no-files-found: error
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.12.2
+          args: --timeout=5m
+
+  security-code:
+    name: Security - source
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run gosec
+        run: |
+          go install github.com/securego/gosec/v2/cmd/gosec@v2.28.0
+          "$(go env GOPATH)/bin/gosec" \
+            -fmt sarif \
+            -out gosec-results.sarif \
+            -exclude-generated \
+            -no-fail \
+            ./...
+
+          findings="$(jq '[.runs[]?.results[]?] | length' gosec-results.sarif)"
+          if [ "${findings}" -gt 0 ]; then
+            echo "gosec reported ${findings} finding(s)."
+            exit 1
+          fi
+
+      - name: Upload gosec SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: gosec-results.sarif
+
+  security-deps:
+    name: Security - dependencies
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install govulncheck
+        run: |
+          go install \
+            golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run govulncheck
+        run: govulncheck ./...
+
+  build:
+    name: Build and push image
+    runs-on: ubuntu-latest
+
+    needs:
+      - test
+      - lint
+      - security-code
+      - security-deps
+
+    if: github.event_name == 'push'
+
+    permissions:
+      contents: read
+      packages: write
+
+    outputs:
+      image-digest: ${{ steps.build.outputs.digest }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate Docker metadata
+        id: metadata
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=ref,event=branch
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  security-image:
+    name: Security - image
+    runs-on: ubuntu-latest
+
+    needs:
+      - build
+
+    if: github.event_name == 'push'
+
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Log in to registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve image reference
+        id: image
+        shell: bash
+        run: |
+          IMAGE_TAG="sha-$(git rev-parse --short HEAD)"
+          IMAGE_REF="${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
+
+          echo "ref=${IMAGE_REF}" >> "${GITHUB_OUTPUT}"
+          echo "Scanning ${IMAGE_REF}"
+
+      - name: Run Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ steps.image.outputs.ref }}
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: true
+
+      - name: Upload Trivy SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-results.sarif
+
+  deploy:
+    name: Deploy - Argo CD sync
+    runs-on: ubuntu-latest
+
+    needs:
+      - build
+      - security-image
+
+    if: >
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main'
+
+    environment:
+      name: production
+      url: https://argocd.yourdomain.com/applications/storemesh-user-service
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Argo CD CLI
+        shell: bash
+        run: |
+          curl \
+            --fail \
+            --silent \
+            --show-error \
+            --location \
+            --output /usr/local/bin/argocd \
+            https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+
+          chmod +x /usr/local/bin/argocd
+
+      - name: Argo CD login
+        shell: bash
+        run: |
+          argocd login "${{ secrets.ARGOCD_SERVER }}" \
+            --auth-token "${{ secrets.ARGOCD_TOKEN }}" \
+            --grpc-web \
+            --insecure
+
+      - name: Update image tag
+        shell: bash
+        run: |
+          IMAGE_TAG="sha-$(git rev-parse --short HEAD)"
+
+          argocd app set storemesh-user-service \
+            --helm-set image.tag="${IMAGE_TAG}"
+
+      - name: Sync application
+        shell: bash
+        run: |
+          argocd app sync storemesh-user-service \
+            --force \
+            --prune \
+            --timeout 300
+
+      - name: Wait for rollout
+        shell: bash
+        run: |
+          argocd app wait storemesh-user-service \
+            --health \
+            --timeout 300
+
+      - name: Verify deployment
+        shell: bash
+        run: |
+          argocd app get storemesh-user-service \
+            --show-params \
+            --output yaml
