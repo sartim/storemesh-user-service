@@ -106,7 +106,7 @@ jobs:
           cache: true
 
       - name: Run gosec
-        uses: securego/gosec@master
+        uses: securego/gosec@v2.28.0
         with:
           args: >
             -fmt sarif
