@@ -34,3 +34,10 @@ jobs:
       - name: Report release
         if: steps.semantic-release.outputs.version != ''
         run: echo "Released StoreMesh user service v${{ steps.semantic-release.outputs.version }}"
+
+      - name: Publish released image
+        if: steps.semantic-release.outputs.version != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.semantic-release.outputs.version }}
+        run: gh workflow run container.yml --ref main --field version="${VERSION}"
