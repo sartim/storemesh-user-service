@@ -106,14 +106,12 @@ jobs:
           cache: true
 
       - name: Run gosec
-        uses: securego/gosec@v2.28.0
-        env:
-          GOTOOLCHAIN: auto
-        with:
-          args: >
-            -fmt sarif
-            -out gosec-results.sarif
-            -exclude-generated
+        run: |
+          go install github.com/securego/gosec/v2/cmd/gosec@v2.28.0
+          "$(go env GOPATH)/bin/gosec" \
+            -fmt sarif \
+            -out gosec-results.sarif \
+            -exclude-generated \
             ./...
 
       - name: Upload gosec SARIF
