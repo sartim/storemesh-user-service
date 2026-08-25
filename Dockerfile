@@ -1,6 +1,8 @@
 # syntax=docker/dockerfile:1.7
 
-ARG GO_VERSION=1.26.5
+ARG GO_VERSION=1.26.6
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
 
 FROM golang:${GO_VERSION}-alpine AS builder
 
@@ -13,8 +15,8 @@ RUN go mod download
 COPY . .
 
 RUN CGO_ENABLED=0 \
-    GOOS=linux \
-    GOARCH=amd64 \
+    GOOS=${TARGETOS} \
+    GOARCH=${TARGETARCH} \
     go build \
     -trimpath \
     -ldflags="-s -w" \
@@ -22,6 +24,19 @@ RUN CGO_ENABLED=0 \
     ./cmd/server
 
 FROM gcr.io/distroless/static-debian12:nonroot
+
+ARG BUILD_DATE="unknown"
+ARG VERSION="dev"
+ARG VCS_REF="unknown"
+ARG SOURCE_URL="https://github.com/sartim/storemesh-user-service"
+
+LABEL org.opencontainers.image.title="StoreMesh User Service" \
+      org.opencontainers.image.description="Identity and user service for the StoreMesh platform." \
+      org.opencontainers.image.source="${SOURCE_URL}" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.licenses="Apache-2.0"
 
 WORKDIR /app
 
