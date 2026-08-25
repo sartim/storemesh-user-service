@@ -112,7 +112,14 @@ jobs:
             -fmt sarif \
             -out gosec-results.sarif \
             -exclude-generated \
+            -no-fail \
             ./...
+
+          findings="$(jq '[.runs[]?.results[]?] | length' gosec-results.sarif)"
+          if [ "${findings}" -gt 0 ]; then
+            echo "gosec reported ${findings} finding(s)."
+            exit 1
+          fi
 
       - name: Upload gosec SARIF
         if: always()
