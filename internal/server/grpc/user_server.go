@@ -3,6 +3,7 @@ package grpc
 import (
 	"context"
 	"errors"
+	"math"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -113,13 +114,39 @@ func (s *UserGRPCServer) ListUsers(
 		)
 	}
 
+	totalPages, err := intToInt32(result.TotalPages)
+	if err != nil {
+		return nil, err
+	}
+
+	page, err := intToInt32(result.Page)
+	if err != nil {
+		return nil, err
+	}
+
+	perPage, err := intToInt32(result.PerPage)
+	if err != nil {
+		return nil, err
+	}
+
 	return &userv1.ListUsersResponse{
 		Users:      users,
 		TotalItems: result.TotalItems,
-		TotalPages: int32(result.TotalPages),
-		Page:       int32(result.Page),
-		PerPage:    int32(result.PerPage),
+		TotalPages: totalPages,
+		Page:       page,
+		PerPage:    perPage,
 	}, nil
+}
+
+func intToInt32(value int) (int32, error) {
+	if value > math.MaxInt32 || value < math.MinInt32 {
+		return 0, status.Error(
+			codes.Internal,
+			"pagination value exceeds protobuf range",
+		)
+	}
+
+	return int32(value), nil
 }
 
 func (s *UserGRPCServer) DeleteUser(
