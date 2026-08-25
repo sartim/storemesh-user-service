@@ -16,26 +16,31 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/health"
+	grpchealth "google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
 
 	userv1 "storemesh-user-service/gen/user/v1"
 	"storemesh-user-service/internal/config"
 	"storemesh-user-service/internal/domain"
+	"storemesh-user-service/internal/health"
 	"storemesh-user-service/internal/helpers/env"
 	grpcmiddleware "storemesh-user-service/internal/middleware"
+	"storemesh-user-service/internal/observability"
 	"storemesh-user-service/internal/repository"
 	postgres "storemesh-user-service/internal/repository/postgres"
 	redisrepository "storemesh-user-service/internal/repository/redis"
 	grpcserver "storemesh-user-service/internal/server/grpc"
+	httpserver "storemesh-user-service/internal/server/http"
 	"storemesh-user-service/internal/server/http/handler"
 	httpmiddleware "storemesh-user-service/internal/server/http/middleware"
 	"storemesh-user-service/internal/service"
@@ -89,6 +94,13 @@ func main() {
 			zap.Error(err),
 		)
 	}
+
+	otel.SetTextMapPropagator(
+		propagation.NewCompositeTextMapPropagator(
+			propagation.TraceContext{},
+			propagation.Baggage{},
+		),
+	)
 
 	tracerProvider, err := initTracer(cfg)
 	if err != nil {
@@ -183,6 +195,22 @@ func main() {
 
 	log.Info("redis connected")
 
+	readinessChecker := health.NewChecker(
+		2*time.Second,
+		health.Dependency{
+			Name:  "postgres",
+			Check: sqlDB.PingContext,
+		},
+		health.Dependency{
+			Name: "redis",
+			Check: func(ctx context.Context) error {
+				return redisClient.Ping(ctx).Err()
+			},
+		},
+	)
+
+	httpMetrics := observability.NewHTTPMetrics()
+
 	userRepository := repository.NewUserRepository(
 		db,
 	)
@@ -247,6 +275,8 @@ func main() {
 	httpServer := buildHTTPServer(
 		cfg,
 		userService,
+		readinessChecker,
+		httpMetrics,
 		log,
 	)
 
@@ -311,7 +341,7 @@ func main() {
 func buildGRPCServer(
 	userService domain.UserService,
 	log *zap.Logger,
-) (*grpc.Server, *health.Server) {
+) (*grpc.Server, *grpchealth.Server) {
 	server := grpc.NewServer(
 		grpc.StatsHandler(
 			grpcmiddleware.TracingStatsHandler(),
@@ -339,7 +369,7 @@ func buildGRPCServer(
 		),
 	)
 
-	healthServer := health.NewServer()
+	healthServer := grpchealth.NewServer()
 
 	grpc_health_v1.RegisterHealthServer(
 		server,
@@ -359,6 +389,8 @@ func buildGRPCServer(
 func buildHTTPServer(
 	cfg *config.Config,
 	userService domain.UserService,
+	readiness *health.Checker,
+	metrics *observability.HTTPMetrics,
 	log *zap.Logger,
 ) *http.Server {
 	if cfg.Environment == "production" {
@@ -371,34 +403,14 @@ func buildHTTPServer(
 
 	router.Use(
 		httpmiddleware.RequestID(),
+		otelgin.Middleware(cfg.ServiceName),
+		metrics.Middleware(),
 		httpmiddleware.Recovery(log),
 		httpmiddleware.Logger(log),
 		httpmiddleware.CORS(),
 	)
 
-	router.GET(
-		"/healthz",
-		func(c *gin.Context) {
-			c.JSON(
-				http.StatusOK,
-				gin.H{
-					"status": "ok",
-				},
-			)
-		},
-	)
-
-	router.GET(
-		"/readyz",
-		func(c *gin.Context) {
-			c.JSON(
-				http.StatusOK,
-				gin.H{
-					"status": "ready",
-				},
-			)
-		},
-	)
+	httpserver.RegisterOperationalRoutes(router, readiness, metrics)
 
 	apiV1 := router.Group(
 		"/api/v1",
@@ -421,7 +433,7 @@ func buildHTTPServer(
 
 func gracefulShutdown(
 	log *zap.Logger,
-	healthServer *health.Server,
+	healthServer *grpchealth.Server,
 	grpcServer *grpc.Server,
 	httpServer *http.Server,
 ) {

@@ -29,6 +29,24 @@ Administrators can list users with optional pagination and status filters:
 GET /api/v1/users?page=1&per_page=20&status=active
 ```
 
+## Health and observability
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /healthz` | Process liveness; does not query dependencies |
+| `GET /readyz` | Readiness for PostgreSQL and Redis |
+| `GET /metrics` | Prometheus application, Go runtime, and process metrics |
+
+Readiness returns `200 OK` only when both PostgreSQL and Redis respond within
+the bounded check timeout. It returns `503 Service Unavailable` when either
+dependency is unavailable.
+
+HTTP requests are traced with OpenTelemetry and use W3C Trace Context and
+Baggage propagation. Traces are exported to the configured `OTLP_ENDPOINT`.
+
+HTTP metrics use normalized Gin route templates to prevent user IDs and other
+path parameters from creating unbounded Prometheus label cardinality.
+
 ## Buf commands
 
     buf build
