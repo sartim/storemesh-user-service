@@ -51,3 +51,10 @@ path parameters from creating unbounded Prometheus label cardinality.
 
     buf build
     buf generate
+
+### Disposable demo accounts
+
+The service seeds demo customer and administrator accounts only when all four
+`DEMO_*` email/password environment variables are supplied. Existing users are
+not overwritten on restart. Keep these variables limited to local or CI
+environments; production secrets should omit them.

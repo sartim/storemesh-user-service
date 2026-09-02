@@ -2,9 +2,11 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -119,6 +121,65 @@ func MigrateAndSeed(db *gorm.DB) error {
 				role.Name,
 				err,
 			)
+		}
+	}
+
+	return nil
+}
+
+// DemoUser contains the minimum credentials needed by the disposable local
+// and CI environments. Demo users are only created when explicitly enabled by
+// the application entrypoint; production deployments never seed them by
+// default.
+type DemoUser struct {
+	Email     string
+	Password  string
+	FirstName string
+	LastName  string
+	Phone     string
+	Role      string
+}
+
+// SeedDemoUsers creates deterministic demo accounts without replacing an
+// existing password. This makes repeated pod starts safe and keeps credentials
+// out of the application image.
+func SeedDemoUsers(db *gorm.DB, users []DemoUser) error {
+	for _, demo := range users {
+		if demo.Email == "" || demo.Password == "" || demo.Role == "" {
+			return fmt.Errorf("demo user requires email, password, and role")
+		}
+
+		var role models.Role
+		if err := db.Where(models.Role{Name: demo.Role}).First(&role).Error; err != nil {
+			return fmt.Errorf("find demo role %q: %w", demo.Role, err)
+		}
+
+		hash, err := bcrypt.GenerateFromPassword([]byte(demo.Password), bcrypt.DefaultCost)
+		if err != nil {
+			return fmt.Errorf("hash demo password for %q: %w", demo.Email, err)
+		}
+
+		user := models.User{}
+		result := db.Where("email = ?", demo.Email).First(&user)
+		if result.Error != nil && !errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("find demo user %q: %w", demo.Email, result.Error)
+		}
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			user = models.User{
+				FirstName: demo.FirstName,
+				LastName:  demo.LastName,
+				Email:     demo.Email,
+				Phone:     demo.Phone,
+				Password:  string(hash),
+				IsActive:  true,
+			}
+			if err := db.Create(&user).Error; err != nil {
+				return fmt.Errorf("create demo user %q: %w", demo.Email, err)
+			}
+		}
+
+		if err := db.Model(&user).Association("Roles").Append(&role); err != nil {
+			return fmt.Errorf("assign demo role %q to %q: %w", demo.Role, demo.Email, err)
 		}
 	}
 

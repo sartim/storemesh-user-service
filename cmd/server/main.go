@@ -171,6 +171,22 @@ func main() {
 			zap.Error(err),
 		)
 	}
+	if os.Getenv("DEMO_CUSTOMER_EMAIL") != "" && os.Getenv("DEMO_CUSTOMER_PASSWORD") != "" &&
+		os.Getenv("DEMO_ADMIN_EMAIL") != "" && os.Getenv("DEMO_ADMIN_PASSWORD") != "" {
+		if err := postgres.SeedDemoUsers(db, []postgres.DemoUser{
+			{
+				Email: os.Getenv("DEMO_CUSTOMER_EMAIL"), Password: os.Getenv("DEMO_CUSTOMER_PASSWORD"),
+				FirstName: "Demo", LastName: "Customer", Phone: "+10000000001", Role: domain.RoleCustomer,
+			},
+			{
+				Email: os.Getenv("DEMO_ADMIN_EMAIL"), Password: os.Getenv("DEMO_ADMIN_PASSWORD"),
+				FirstName: "Demo", LastName: "Administrator", Phone: "+10000000002", Role: domain.RoleAdmin,
+			},
+		}); err != nil {
+			log.Fatal("seed demo users", zap.Error(err))
+		}
+		log.Info("demo users seeded")
+	}
 
 	log.Info("migrations applied")
 
