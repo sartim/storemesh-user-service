@@ -58,3 +58,24 @@ The service seeds demo customer and administrator accounts only when all four
 `DEMO_*` email/password environment variables are supplied. Existing users are
 not overwritten on restart. Keep these variables limited to local or CI
 environments; production secrets should omit them.
+
+## Run locally without Docker or Kubernetes
+
+Requires Go 1.26.6 or newer. The service can run with its local compatibility
+configuration while developing the HTTP/gRPC boundary:
+
+```sh
+GRPC_PORT=50053 HTTP_PORT=8080 \
+JWT_SECRET='local-development-secret-at-least-32-characters' \
+DEMO_CUSTOMER_EMAIL='demo@storemesh.local' \
+DEMO_CUSTOMER_PASSWORD='StoreMesh-demo-2026!' \
+DEMO_ADMIN_EMAIL='admin@storemesh.local' \
+DEMO_ADMIN_PASSWORD='StoreMesh-admin-2026!' \
+go run ./cmd/server
+```
+
+Without `DATABASE_URL` and `REDIS_URL`, use the service's local development
+mode where supported. Set those variables only when exercising persistent
+readiness and session behavior against separately managed dependencies. The
+ports above allow the BFF to use `localhost:50053` while Product, Inventory,
+and Order use their own local gRPC ports.
