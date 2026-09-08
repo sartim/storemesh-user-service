@@ -61,10 +61,14 @@ environments; production secrets should omit them.
 
 ## Run locally without Docker or Kubernetes
 
-Requires Go 1.26.6 or newer. The service can run with its local compatibility
-configuration while developing the HTTP/gRPC boundary:
+Requires Go 1.26.6 or newer, plus PostgreSQL and Redis installed and running
+as native processes on the development machine. The service requires both
+dependencies even in local mode; it applies its GORM migrations at startup.
+Set `DATABASE_URL` and `REDIS_URL` to match the local installations:
 
 ```sh
+DATABASE_URL='postgres://localhost:5432/storemesh?sslmode=disable' \
+REDIS_URL='redis://localhost:6379' \
 GRPC_PORT=50054 HTTP_PORT=8090 \
 JWT_SECRET='local-development-secret-at-least-32-characters' \
 DEMO_CUSTOMER_EMAIL='demo@storemesh.local' \
